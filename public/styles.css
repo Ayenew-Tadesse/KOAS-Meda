@@ -63,7 +63,48 @@ h1, h2 { font-family: var(--font-display); letter-spacing: 0.01em; text-wrap: ba
 .brand h1 { font-size: 30px; line-height: 1; text-transform: uppercase; color: var(--pitch); }
 .brand .sub { font-size: 13px; color: var(--muted); letter-spacing: 0.06em; text-transform: uppercase; }
 .account { display: flex; gap: 8px; align-items: center; font-size: 14px; }
-.account .who { font-weight: 600; }
+.account-cta { display: flex; gap: 8px; }
+
+/* Hamburger menu */
+.menu-wrap { position: relative; }
+.menu-btn {
+  width: 42px; height: 40px; padding: 0; display: grid; place-content: center; gap: 4px;
+}
+.menu-btn span { display: block; width: 18px; height: 2px; border-radius: 2px; background: var(--ink); transition: transform 0.15s, opacity 0.15s; }
+.menu-btn[aria-expanded="true"] span:nth-child(1) { transform: translateY(6px) rotate(45deg); }
+.menu-btn[aria-expanded="true"] span:nth-child(2) { opacity: 0; }
+.menu-btn[aria-expanded="true"] span:nth-child(3) { transform: translateY(-6px) rotate(-45deg); }
+@media (prefers-reduced-motion: reduce) { .menu-btn span { transition: none; } }
+.menu {
+  position: absolute; right: 0; top: calc(100% + 6px); z-index: 10; min-width: 220px;
+  background: var(--surface); border: 1px solid var(--line); border-radius: 12px;
+  box-shadow: 0 10px 30px rgb(0 0 0 / 0.14); padding: 6px; display: grid;
+}
+.menu .menu-head { padding: 10px 12px 8px; border-bottom: 1px solid var(--line); margin-bottom: 4px; }
+.menu .menu-head b { display: block; }
+.menu .menu-head span { font-size: 13px; color: var(--muted); word-break: break-all; }
+.menu button {
+  border: 0; background: none; text-align: left; padding: 10px 12px; border-radius: 8px; font-weight: 500;
+}
+.menu button:hover { background: var(--bg); }
+.menu button.danger { color: var(--live); }
+
+.notice, .profile-card {
+  background: var(--surface); border: 1px solid var(--line); border-radius: 12px; padding: 18px; max-width: 520px;
+}
+.notice p { margin: 0 0 8px; }
+.profile-card { display: grid; gap: 16px; }
+.profile-card form { display: grid; gap: 8px; }
+.profile-card label { display: grid; gap: 4px; font-size: 14px; font-weight: 600; }
+.profile-card input { border: 1px solid var(--line); border-radius: 8px; padding: 9px 10px; background: var(--bg); font-weight: 400; }
+.profile-row { display: flex; gap: 8px; align-items: center; }
+.profile-row input { flex: 1; min-width: 0; }
+.stats { display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; }
+.stat { background: var(--bg); border-radius: 10px; padding: 10px; text-align: center; }
+.stat b { display: block; font-family: var(--font-display); font-size: 26px; line-height: 1.1; font-variant-numeric: tabular-nums; }
+.stat span { font-size: 12px; color: var(--muted); text-transform: uppercase; letter-spacing: 0.06em; }
+#tab-profile h2, #tab-deposit h2 { font-size: 24px; text-transform: uppercase; margin-bottom: 12px; }
+@media (max-width: 520px) { .stats { grid-template-columns: repeat(2, 1fr); } }
 
 .tabs { display: flex; gap: 4px; border-bottom: 1px solid var(--line); margin-bottom: 16px; overflow-x: auto; }
 .tabs button {

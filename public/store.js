@@ -31,8 +31,8 @@
 
     async init() {
       const id = ls.get('koas.session', null);
-      const u = id && Object.values(this.users()).find((x) => x.id === id);
-      this.user = u ? { id: u.id, name: u.name } : null;
+      const entry = id && Object.entries(this.users()).find(([, x]) => x.id === id);
+      this.user = entry ? { id: entry[1].id, name: entry[1].name, email: entry[0] } : null;
       return this.user;
     }
 
@@ -44,7 +44,7 @@
       users[key] = { id, name: name.trim(), pass: await hash(`${key}:${password}`) };
       ls.set('koas.users', users);
       ls.set('koas.session', id);
-      this.user = { id, name: name.trim() };
+      this.user = { id, name: name.trim(), email: key };
       return { user: this.user };
     }
 
@@ -54,11 +54,19 @@
         throw new StoreError('Email or password is incorrect.');
       }
       ls.set('koas.session', u.id);
-      this.user = { id: u.id, name: u.name };
+      this.user = { id: u.id, name: u.name, email: email.trim().toLowerCase() };
       return this.user;
     }
 
     async signOut() { ls.del('koas.session'); this.user = null; }
+
+    async updateName(name) {
+      const users = this.users();
+      users[this.user.email].name = name;
+      ls.set('koas.users', users);
+      this.user = { ...this.user, name };
+      return this.user;
+    }
 
     async loadPredictions() {
       return (this.user && ls.get('koas.predictions', {})[this.user.id]) || {};
@@ -119,7 +127,7 @@
     async profile(authUser) {
       const { data } = await this.sb.from('profiles').select('display_name').eq('id', authUser.id).maybeSingle();
       const name = (data && data.display_name) || (authUser.user_metadata && authUser.user_metadata.display_name) || authUser.email;
-      return { id: authUser.id, name };
+      return { id: authUser.id, name, email: authUser.email };
     }
 
     async signUp({ name, email, password }) {
@@ -138,6 +146,13 @@
     }
 
     async signOut() { await this.sb.auth.signOut(); this.user = null; }
+
+    async updateName(name) {
+      const { error } = await this.sb.from('profiles').update({ display_name: name }).eq('id', this.user.id);
+      if (error) throw new StoreError(friendly(error));
+      this.user = { ...this.user, name };
+      return this.user;
+    }
 
     async loadPredictions() {
       if (!this.user) return {};

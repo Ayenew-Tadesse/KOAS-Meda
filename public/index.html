@@ -8,7 +8,7 @@
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@600;700&family=Barlow:wght@400;500;600&display=swap" rel="stylesheet" />
-  <link rel="stylesheet" href="styles.css?v=202610110723" />
+  <link rel="stylesheet" href="styles.css?v=202610110726" />
 </head>
 <body>
   <div id="demo-banner" class="banner" hidden>
@@ -20,7 +20,15 @@
       <h1>KOAS Meda</h1>
       <span class="sub">Premier League Predictor</span>
     </div>
-    <div id="account" class="account"></div>
+    <div class="account">
+      <div id="account-cta" class="account-cta"></div>
+      <div class="menu-wrap">
+        <button type="button" id="menu-btn" class="menu-btn" aria-label="Menu" aria-haspopup="true" aria-expanded="false" aria-controls="menu">
+          <span></span><span></span><span></span>
+        </button>
+        <nav id="menu" class="menu" hidden aria-label="Account"></nav>
+      </div>
+    </div>
   </header>
 
   <nav class="tabs" aria-label="Sections">
@@ -45,6 +53,19 @@
     <section id="tab-table" class="panel" hidden>
       <h2>Leaderboard</h2>
       <div id="leaderboard"></div>
+    </section>
+
+    <section id="tab-profile" class="panel" hidden>
+      <h2>Profile</h2>
+      <div id="profile"></div>
+    </section>
+
+    <section id="tab-deposit" class="panel" hidden>
+      <h2>Deposit</h2>
+      <div class="notice">
+        <p><strong>Deposits aren't available yet.</strong></p>
+        <p class="muted">KOAS Meda is free to play for now. Predict every matchweek and climb the leaderboard. We'll let you know here when deposits open.</p>
+      </div>
     </section>
 
     <section id="tab-rules" class="panel rules" hidden>
@@ -95,9 +116,9 @@
 
   <footer class="foot">Fixtures and scores from ESPN. Free to play, just for fun.</footer>
 
-  <script src="config.js?v=202610110723"></script>
-  <script src="core.js?v=202610110723"></script>
-  <script src="store.js?v=202610110723"></script>
-  <script src="app.js?v=202610110723"></script>
+  <script src="config.js?v=202610110726"></script>
+  <script src="core.js?v=202610110726"></script>
+  <script src="store.js?v=202610110726"></script>
+  <script src="app.js?v=202610110726"></script>
 </body>
 </html>

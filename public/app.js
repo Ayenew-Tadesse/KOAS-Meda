@@ -6,7 +6,6 @@
   const $ = (sel) => document.querySelector(sel);
   const els = {
     banner: $('#demo-banner'),
-    account: $('#account'),
     fixtures: $('#fixtures'),
     weekTitle: $('#week-title'),
     weekSummary: $('#week-summary'),
@@ -433,17 +432,105 @@
     return b;
   }
 
+  // Header: sign-up buttons when signed out, and the menu (☰) with the
+  // account's pages and sign-out.
+  const menuBtn = $('#menu-btn');
+  const menu = $('#menu');
+
+  function openMenu(open) {
+    menu.hidden = !open;
+    menuBtn.setAttribute('aria-expanded', String(open));
+    if (open) { const first = menu.querySelector('button'); if (first) first.focus(); }
+  }
+
+  function menuItem(text, onClick, cls = '') {
+    return button(text, cls, () => { openMenu(false); onClick(); });
+  }
+
+  async function signOut() {
+    await state.store.signOut();
+    state.user = null;
+    state.saved = {};
+    state.draft = {};
+    setTab('week');
+  }
+
   function renderAccount() {
+    $('#account-cta').replaceChildren(...(state.user ? [] : [button('Sign up', 'primary', () => openAuth('signup'))]));
     if (state.user) {
-      els.account.replaceChildren(el('span', 'who', state.user.name), button('Sign out', '', async () => {
-        await state.store.signOut();
-        state.user = null;
-        state.saved = {};
-        state.draft = {};
-        render();
-      }));
+      const head = el('div', 'menu-head');
+      head.append(el('b', '', state.user.name), el('span', '', state.user.email || ''));
+      menu.replaceChildren(head,
+        menuItem('Profile', () => setTab('profile')),
+        menuItem('Deposit', () => setTab('deposit')),
+        menuItem('Sign out', signOut, 'danger'));
     } else {
-      els.account.replaceChildren(button('Sign in', '', () => openAuth('signin')), button('Sign up', 'primary', () => openAuth('signup')));
+      menu.replaceChildren(menuItem('Sign in', () => openAuth('signin')), menuItem('Sign up', () => openAuth('signup')));
+    }
+  }
+
+  menuBtn.addEventListener('click', (e) => { e.stopPropagation(); openMenu(menu.hidden); });
+  document.addEventListener('click', (e) => { if (!menu.hidden && !menu.contains(e.target)) openMenu(false); });
+  document.addEventListener('keydown', (e) => { if (e.key === 'Escape' && !menu.hidden) { openMenu(false); menuBtn.focus(); } });
+
+  // ---- Profile ---------------------------------------------------------------
+
+  async function renderProfile() {
+    const box = $('#profile');
+    if (!state.user) {
+      const wrap = el('div', 'notice');
+      wrap.append(el('p', '', 'Sign in to see your profile.'), button('Sign in', 'primary', () => openAuth('signin')));
+      box.replaceChildren(wrap);
+      return;
+    }
+    const card = el('div', 'profile-card');
+
+    const form = el('form');
+    const label = el('label', '', 'Name on the leaderboard');
+    const row = el('div', 'profile-row');
+    const input = el('input');
+    input.id = 'profile-name';
+    input.maxLength = 24;
+    input.value = state.user.name;
+    const save = el('button', 'primary', 'Save');
+    save.type = 'submit';
+    row.append(input, save);
+    label.append(row);
+    const msg = el('p', 'muted', '');
+    form.append(label, msg);
+    form.addEventListener('submit', async (e) => {
+      e.preventDefault();
+      const name = input.value.trim();
+      if (name.length < 2 || name.length > 24) { msg.className = 'error'; msg.textContent = 'Enter a name of 2 to 24 characters.'; return; }
+      save.disabled = true;
+      try {
+        state.user = await state.store.updateName(name);
+        renderAccount();
+        msg.className = 'muted'; msg.textContent = 'Name saved.';
+      } catch (err) {
+        msg.className = 'error'; msg.textContent = err.message;
+      } finally {
+        save.disabled = false;
+      }
+    });
+
+    const email = el('div');
+    email.append(el('div', 'muted', 'Email'), el('div', '', state.user.email || '–'));
+
+    const stats = el('div', 'stats');
+    const stat = (value, label) => { const d = el('div', 'stat'); d.append(el('b', '', value), el('span', '', label)); return d; };
+    stats.append(stat('…', 'Rank'), stat('…', 'Points'), stat('…', 'Exact'), stat('…', 'Results'));
+
+    card.append(form, email, stats, button('Sign out', '', signOut));
+    box.replaceChildren(card);
+
+    try {
+      const rows = await state.store.leaderboard(state.events);
+      const me = rows.find((r) => r.id === state.user.id) || { rank: '–', points: 0, exact: 0, results: 0 };
+      stats.replaceChildren(stat(`${me.rank}${rows.length ? ` / ${rows.length}` : ''}`, 'Rank'), stat(String(me.points), 'Points'),
+        stat(String(me.exact), 'Exact'), stat(String(me.results), 'Results'));
+    } catch {
+      stats.replaceChildren(el('p', 'muted', "Couldn't load your stats right now."));
     }
   }
 
@@ -511,13 +598,17 @@
     renderAccount();
     if (state.tab === 'week') renderWeek();
     if (state.tab === 'table') renderBoard();
+    // Profile is built once per visit so a periodic refresh can't wipe a half-typed name.
+    if (state.tab === 'profile' && !$('#profile-name')) renderProfile();
     renderSavebar();
   }
 
   function setTab(tab) {
     state.tab = tab;
     document.querySelectorAll('.tabs button').forEach((b) => b.classList.toggle('active', b.dataset.tab === tab));
-    ['week', 'table', 'rules'].forEach((t) => { $(`#tab-${t}`).hidden = t !== tab; });
+    ['week', 'table', 'rules', 'profile', 'deposit'].forEach((t) => { $(`#tab-${t}`).hidden = t !== tab; });
+    window.scrollTo(0, 0);
+    if (tab === 'profile') $('#profile').replaceChildren();
     render();
   }
 
