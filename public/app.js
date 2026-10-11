@@ -1,39 +1,38 @@
 (() => {
-  const LIVE_REFRESH_MS = 15000; // when a game is in progress
-  const IDLE_REFRESH_MS = 60000; // when nothing is live
-  const LIVE_COUNT_MAX_AGE_MS = 120000; // how stale the Live badge may get off the home view
-  const STATE_ORDER = { in: 0, pre: 1, post: 2 };
-  const STATE_LABEL = { in: 'LIVE', pre: 'Upcoming', post: 'Final' };
+  const core = KOAS.core;
+  const LIVE_REFRESH_MS = 15000;
+  const IDLE_REFRESH_MS = 60000;
 
   const $ = (sel) => document.querySelector(sel);
   const els = {
-    leagues: $('#leagues'),
-    games: $('#games'),
-    status: $('#status'),
-    date: $('#date'),
-    liveCount: $('#live-count'),
+    banner: $('#demo-banner'),
+    account: $('#account'),
+    fixtures: $('#fixtures'),
+    weekTitle: $('#week-title'),
+    weekSummary: $('#week-summary'),
+    prev: $('#prev-week'),
+    next: $('#next-week'),
+    savebar: $('#savebar'),
+    saveMsg: $('#save-msg'),
+    save: $('#save'),
+    board: $('#leaderboard'),
+    auth: $('#auth'),
   };
-
-  const ALL = 'all'; // league key meaning "every league"
 
   const state = {
-    league: ALL, // the home page shows every league
-    filter: 'all',
-    date: '', // '' = today
-    data: null,
-    prevScores: new Map(),
+    store: KOAS.createStore(),
+    user: null,
+    tab: 'week',
+    events: [],
+    eventsById: {},
+    weeks: [],
+    weekId: null, // the matchweek on screen; null = the current one
+    saved: {}, // { eventId: { home, away } } as stored
+    draft: {}, // { eventId: { home: '2', away: '' } } unsaved edits
+    saving: false,
     timer: null,
-    loading: false,
-    leagues: [],
-    // Live-game count across every league for the Live badge, kept fresh
-    // in the background while a single league or another date is shown.
-    liveCount: 0,
-    liveCountAt: 0,
-  };
-
-  const todayIso = () => {
-    const d = new Date();
-    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+    lockTimer: null,
+    message: null, // { text, kind } shown in the save bar
   };
 
   function el(tag, cls, text) {
@@ -43,253 +42,496 @@
     return n;
   }
 
-  // Data source: our Node server's /api when it's running, otherwise ESPN
-  // directly from the browser (e.g. index.html opened from disk or a static host).
-  const ESPN_BASE = 'https://site.api.espn.com/apis/site/v2/sports';
-  let mode = location.protocol === 'file:' ? 'direct' : null;
+  const fmtTime = (d) => new Date(d).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+  const fmtDay = (d) => new Date(d).toLocaleDateString([], { weekday: 'long', day: 'numeric', month: 'long' });
+  const fmtShort = (d) => new Date(d).toLocaleDateString([], { weekday: 'short', day: 'numeric', month: 'short' });
+  const fmtLock = (d) => `${new Date(d).toLocaleDateString([], { weekday: 'short' })} ${fmtTime(d)}`;
 
-  async function fetchLeagues() {
-    if (mode !== 'direct') {
+  function fmtIn(ms) {
+    if (ms <= 0) return 'now';
+    const m = Math.floor(ms / 60000);
+    if (m < 60) return `in ${m}m`;
+    const h = Math.floor(m / 60);
+    if (h < 48) return `in ${h}h ${m % 60}m`;
+    return `in ${Math.floor(h / 24)} days`;
+  }
+
+  // ---- Data ---------------------------------------------------------------
+
+  // Our Node server's /api when it's running, otherwise ESPN directly
+  // (GitHub Pages, or index.html opened from disk).
+  let source = location.protocol === 'file:' ? 'direct' : null;
+
+  async function fetchEvents() {
+    const dates = core.dateRange(new Date(), 14, 35);
+    if (source !== 'direct') {
       try {
-        const res = await fetch('api/leagues');
+        const res = await fetch(`api/scoreboard?dates=${dates}`);
         const body = await res.json();
-        if (res.ok && Array.isArray(body)) { mode = 'server'; return body; }
-      } catch { /* no server; fall through */ }
-      mode = 'direct';
+        if (res.ok && Array.isArray(body.events)) { source = 'server'; return body.events; }
+      } catch { /* no server */ }
+      source = 'direct';
     }
-    return KOAS.leagues.LEAGUES;
-  }
-
-  async function fetchScoreboard(leagueKey, date) {
-    if (mode === 'server') {
-      const params = new URLSearchParams({ league: leagueKey });
-      if (date) params.set('date', date);
-      const res = await fetch(`api/scoreboard?${params}`);
-      const body = await res.json();
-      if (!res.ok) throw new Error(body.error || `HTTP ${res.status}`);
-      return body;
-    }
-    const league = KOAS.leagues.byKey[leagueKey];
-    const url = new URL(`${ESPN_BASE}/${league.sport}/${league.league}/scoreboard`);
-    if (date) url.searchParams.set('dates', date);
-    const res = await fetch(url);
+    const res = await fetch(`${core.ESPN_SCOREBOARD}?limit=200&dates=${dates}`);
     if (!res.ok) throw new Error(`ESPN responded ${res.status}`);
-    const data = KOAS.normalize.normalizeScoreboard(await res.json(), leagueKey);
-    return { ...data, leagueName: league.name, updatedAt: new Date().toISOString() };
+    return core.normalizeScoreboard(await res.json()).events;
   }
-
-  async function loadLeagues() {
-    state.leagues = await fetchLeagues();
-    const chips = [{ key: ALL, name: 'All leagues' }, ...state.leagues].map((l) => {
-      const b = el('button', l.key === state.league ? 'active' : '', l.name);
-      b.type = 'button';
-      b.dataset.key = l.key;
-      b.addEventListener('click', () => {
-        if (l.key !== ALL && state.filter === 'in') setFilter('all'); // Live spans every league
-        selectLeague(l.key);
-      });
-      return b;
-    });
-    els.leagues.replaceChildren(...chips);
-  }
-
-  function selectLeague(key) {
-    if (key === state.league) return;
-    state.league = key;
-    state.prevScores.clear();
-    els.leagues.querySelectorAll('button').forEach((b) => b.classList.toggle('active', b.dataset.key === key));
-    els.games.replaceChildren(el('div', 'empty', key === ALL ? 'Loading every league…' : 'Loading…'));
-    refresh();
-  }
-
-  // Loads one league, or every league in parallel; games carry their league.
-  async function loadScope(leagueKey, date) {
-    const keys = leagueKey === ALL ? state.leagues.map((l) => l.key) : [leagueKey];
-    const results = await Promise.allSettled(keys.map((k) => fetchScoreboard(k, date)));
-    const ok = results.filter((r) => r.status === 'fulfilled').map((r) => r.value);
-    if (!ok.length) throw results[0].reason;
-    const order = Object.fromEntries(state.leagues.map((l, i) => [l.key, i]));
-    return {
-      events: ok.flatMap((sb) => sb.events.map((e) => ({ ...e, leagueKey: sb.league, leagueName: sb.leagueName, leagueOrder: order[sb.league] ?? 99 }))),
-      leagueName: leagueKey === ALL ? 'any league' : ok[0].leagueName,
-      leaguesLoaded: ok.length,
-      failed: results.length - ok.length,
-      stale: ok.some((sb) => sb.stale),
-      updatedAt: ok.map((sb) => sb.updatedAt).sort()[0],
-    };
-  }
-
-  const countLive = (events) => events.filter((e) => e.state === 'in').length;
 
   async function refresh() {
     clearTimeout(state.timer);
-    if (state.loading) { state.again = true; return; } // re-run once the current request ends
-    state.loading = true;
-    const { league, date } = state;
     try {
-      const showingAllToday = league === ALL && !date;
-      const badgeSweep = !showingAllToday && Date.now() - state.liveCountAt > LIVE_COUNT_MAX_AGE_MS
-        ? loadScope(ALL, '').then((d) => { state.liveCount = countLive(d.events); state.liveCountAt = Date.now(); renderLiveCount(); }, () => {})
-        : null;
-      const body = await loadScope(league, date ? date.replaceAll('-', '') : '');
-      if (league !== state.league || date !== state.date) return; // selection changed mid-request
-      state.data = body;
-      if (showingAllToday) { state.liveCount = countLive(body.events); state.liveCountAt = Date.now(); }
+      const events = await fetchEvents();
+      state.events = events;
+      state.eventsById = Object.fromEntries(events.map((e) => [e.id, e]));
+      state.weeks = core.groupMatchweeks(events);
       render();
-      const t = new Date(body.updatedAt).toLocaleTimeString();
-      let msg = body.stale ? `Showing cached data from ${t} (source unavailable)` : `Updated ${t}`;
-      if (league === ALL) msg = `${body.events.length} games in ${body.leaguesLoaded} leagues · ${msg}`;
-      if (body.failed) msg += ` · ${body.failed} league${body.failed > 1 ? 's' : ''} couldn't load`;
-      setStatus(msg, body.stale);
-      await badgeSweep;
     } catch (err) {
       const reason = err instanceof TypeError ? 'network error, check your connection' : err.message;
-      setStatus(`Couldn't load scores (${reason})`, true);
-      if (!state.data) els.games.replaceChildren(el('div', 'empty', 'Scores are unavailable right now. Retrying…'));
+      if (!state.events.length) els.fixtures.replaceChildren(el('div', 'empty', `Couldn't load fixtures (${reason}). Retrying…`));
     } finally {
-      state.loading = false;
-      if (state.again) { state.again = false; refresh(); } else schedule();
+      if (!document.hidden) {
+        const live = state.events.some((e) => e.state === 'in');
+        state.timer = setTimeout(refresh, live ? LIVE_REFRESH_MS : IDLE_REFRESH_MS);
+      }
     }
   }
 
-  function schedule() {
-    clearTimeout(state.timer);
-    if (document.hidden) return; // resume on visibilitychange
-    const anyLive = state.data && countLive(state.data.events) > 0;
-    state.timer = setTimeout(refresh, anyLive ? LIVE_REFRESH_MS : IDLE_REFRESH_MS);
+  async function loadPredictions() {
+    try {
+      state.saved = await state.store.loadPredictions();
+    } catch (err) {
+      state.saved = {};
+      setMessage(err.message, 'error');
+    }
   }
 
-  function setStatus(msg, isError) {
-    els.status.textContent = msg;
-    els.status.classList.toggle('error', Boolean(isError));
+  // ---- Matchweek ----------------------------------------------------------
+
+  function currentWeek() {
+    if (!state.weeks.length) return null;
+    let i = state.weeks.findIndex((w) => w.id === state.weekId);
+    if (i === -1) i = core.currentWeekIndex(state.weeks);
+    return { week: state.weeks[i], index: i };
   }
 
-  function teamRow(team, game) {
-    const row = el('div', 'team');
-    if (game.state === 'post' && !team.winner && (game.home.winner || game.away.winner)) row.classList.add('loser');
+  const valueOf = (id, side) => {
+    const d = state.draft[id];
+    if (d && d[side] !== undefined) return d[side];
+    const s = state.saved[id];
+    return s ? String(s[side]) : '';
+  };
 
+  function parsedPick(id) {
+    const h = valueOf(id, 'home');
+    const a = valueOf(id, 'away');
+    if (h === '' || a === '') return null;
+    const pick = { home: Number(h), away: Number(a) };
+    return core.validGoals(pick.home) && core.validGoals(pick.away) ? pick : null;
+  }
+
+  const isDirty = (id) => {
+    const pick = parsedPick(id);
+    const s = state.saved[id];
+    return Boolean(state.draft[id]) && (!s || !pick || s.home !== pick.home || s.away !== pick.away);
+  };
+
+  function crest(team) {
     if (team.logo) {
       const img = el('img');
       img.src = team.logo;
       img.alt = '';
       img.loading = 'lazy';
-      img.onerror = () => img.replaceWith(badge(team));
-      row.append(img);
-    } else {
-      row.append(badge(team));
+      img.onerror = () => img.replaceWith(fallbackCrest(team));
+      return img;
     }
+    return fallbackCrest(team);
+  }
 
-    const name = el('div', 'name', team.name);
-    if (team.record) name.append(el('span', 'record', team.record));
-    row.append(name);
+  function fallbackCrest(team) {
+    const c = el('span', 'crest', (team.short || team.name).slice(0, 3));
+    if (team.color) c.style.background = team.color;
+    return c;
+  }
 
-    const score = el('div', 'score', game.state === 'pre' ? '' : (team.score ?? '-'));
-    const key = `${game.id}:${team.id}`;
-    const prev = state.prevScores.get(key);
-    if (prev != null && team.score != null && prev !== team.score) score.classList.add('flash');
-    if (team.score != null) state.prevScores.set(key, team.score);
-    row.append(score);
+  function teamCell(team, side) {
+    const t = el('div', `team ${side}`);
+    const nm = el('span', 'nm', team.name);
+    const short = el('span', 'nm-short', team.short || team.name.slice(0, 3).toUpperCase());
+    t.title = team.name;
+    if (side === 'home') t.append(nm, short, crest(team));
+    else t.append(crest(team), nm, short);
+    return t;
+  }
+
+  function goalInput(ev, side) {
+    const input = el('input', 'goal');
+    input.inputMode = 'numeric';
+    input.autocomplete = 'off';
+    input.maxLength = 2;
+    input.value = valueOf(ev.id, side);
+    input.dataset.fid = ev.id;
+    input.dataset.side = side;
+    input.setAttribute('aria-label', `${side === 'home' ? ev.home.name : ev.away.name} goals`);
+    input.classList.toggle('filled', input.value !== '');
+    input.addEventListener('input', () => {
+      input.value = input.value.replace(/\D/g, '').slice(0, 2);
+      if (input.value !== '' && Number(input.value) > core.MAX_GOALS) input.value = String(core.MAX_GOALS);
+      state.draft[ev.id] = { home: valueOf(ev.id, 'home'), away: valueOf(ev.id, 'away'), [side]: input.value };
+      input.classList.toggle('filled', input.value !== '');
+      state.message = null;
+      renderSavebar();
+      // After a digit, move on to the next box so a whole week can be typed quickly.
+      if (input.value.length === 1) {
+        const all = [...els.fixtures.querySelectorAll('input.goal')];
+        const next = all[all.indexOf(input) + 1];
+        if (next) next.focus();
+      }
+    });
+    input.addEventListener('focus', () => input.select());
+    return input;
+  }
+
+  function fixtureRow(ev) {
+    const open = core.isOpen(ev);
+    const row = el('div', 'fx');
+    const main = el('div', 'fx-main');
+    const mid = el('div', 'mid');
+
+    if (open) {
+      mid.append(goalInput(ev, 'home'), el('span', 'dash', '–'), goalInput(ev, 'away'));
+    } else if (ev.state === 'pre') {
+      mid.append(el('span', 'ko', fmtTime(ev.date)));
+    } else {
+      mid.append(el('span', 'score', `${ev.home.score ?? '-'} – ${ev.away.score ?? '-'}`));
+    }
+    main.append(teamCell(ev.home, 'home'), mid, teamCell(ev.away, 'away'));
+
+    const foot = el('div', 'fx-foot');
+    let status;
+    if (open) {
+      status = el('span', 'status open', `${fmtTime(ev.date)} kick-off · locks ${fmtLock(core.deadlineOf(ev))}`);
+    } else if (ev.state === 'pre') {
+      status = el('span', 'status locked', '🔒 Predictions locked');
+    } else if (ev.state === 'in') {
+      status = el('span', 'status live', `LIVE ${ev.detail}`);
+    } else {
+      status = el('span', 'status', ev.completed ? ev.detail || 'Full time' : `${ev.detail || 'Called off'} · no points`);
+    }
+    foot.append(status);
+
+    if (!open && state.user) {
+      const pickWrap = el('span', 'pick');
+      const pick = state.saved[ev.id];
+      pickWrap.append(el('span', '', pick ? `Your pick ${pick.home} – ${pick.away}` : 'No prediction'));
+      const s = core.scorePrediction(pick, ev);
+      if (s) pickWrap.append(el('span', `pts${s.points ? '' : ' zero'}`, `+${s.points}`));
+      else if (ev.state === 'post' && ev.completed && !pick) pickWrap.append(el('span', 'pts zero', '+0'));
+      foot.append(pickWrap);
+    } else if (open && ev.broadcast) {
+      foot.append(el('span', '', ev.broadcast));
+    }
+    row.append(main, foot);
     return row;
   }
 
-  function badge(team) {
-    const b = el('div', 'badge', (team.short || team.name || '?').slice(0, 3));
-    if (team.color) b.style.background = team.color;
+  function renderWeek() {
+    const cur = currentWeek();
+    if (!cur) {
+      els.weekTitle.textContent = 'Matchweek';
+      els.weekSummary.textContent = '';
+      els.fixtures.replaceChildren(el('div', 'empty', 'No Premier League fixtures in the next few weeks.'));
+      els.prev.disabled = els.next.disabled = true;
+      renderSavebar();
+      return;
+    }
+    const { week, index } = cur;
+    els.prev.disabled = index === 0;
+    els.next.disabled = index === state.weeks.length - 1;
+    const sameDay = fmtShort(week.start) === fmtShort(week.end);
+    els.weekTitle.textContent = sameDay ? fmtShort(week.start) : `${fmtShort(week.start)} – ${fmtShort(week.end)}`;
+    els.weekSummary.textContent = weekSummary(week);
+
+    // Keep focus on the box being typed in across re-renders.
+    const active = document.activeElement;
+    const focus = active && active.dataset && active.dataset.fid ? { ...active.dataset } : null;
+
+    const days = [];
+    for (const ev of week.events) {
+      const label = fmtDay(ev.date);
+      let day = days[days.length - 1];
+      if (!day || day.label !== label) days.push(day = { label, events: [] });
+      day.events.push(ev);
+    }
+    els.fixtures.replaceChildren(...days.map((d) => {
+      const wrap = el('div', 'day');
+      const list = el('div', 'day-list');
+      list.append(...d.events.map(fixtureRow));
+      wrap.append(el('h3', '', d.label), list);
+      return wrap;
+    }));
+
+    if (focus) {
+      const again = [...els.fixtures.querySelectorAll('input.goal')]
+        .find((i) => i.dataset.fid === focus.fid && i.dataset.side === focus.side);
+      if (again) again.focus();
+    }
+    renderSavebar();
+    scheduleLockCheck(week);
+  }
+
+  function weekSummary(week) {
+    const open = week.events.filter((e) => core.isOpen(e));
+    const parts = [`${week.events.length} games`];
+    if (state.user) {
+      const done = week.events.map((e) => core.scorePrediction(state.saved[e.id], e)).filter(Boolean);
+      if (done.length) parts.push(`${done.reduce((n, s) => n + s.points, 0)} pts so far`);
+    }
+    if (open.length) {
+      const next = Math.min(...open.map((e) => core.deadlineOf(e).getTime()));
+      parts.push(`next lock ${fmtLock(next)} (${fmtIn(next - Date.now())})`);
+    } else if (week.events.every((e) => e.state === 'post')) {
+      parts.push('finished');
+    } else {
+      parts.push('all predictions locked');
+    }
+    return parts.join(' · ');
+  }
+
+  // Re-render the moment the next game in view locks.
+  function scheduleLockCheck(week) {
+    clearTimeout(state.lockTimer);
+    const waits = week.events.filter((e) => core.isOpen(e)).map((e) => core.deadlineOf(e).getTime() - Date.now());
+    if (!waits.length) return;
+    state.lockTimer = setTimeout(renderWeek, Math.min(Math.max(Math.min(...waits) + 500, 1000), 2 ** 31 - 1));
+  }
+
+  // ---- Save bar ------------------------------------------------------------
+
+  function setMessage(text, kind) {
+    state.message = text ? { text, kind } : null;
+    renderSavebar();
+  }
+
+  function renderSavebar() {
+    const cur = currentWeek();
+    const open = cur ? cur.week.events.filter((e) => core.isOpen(e)) : [];
+    els.savebar.hidden = state.tab !== 'week' || !open.length;
+    if (els.savebar.hidden) return;
+
+    const filled = open.filter((e) => parsedPick(e.id)).length;
+    const dirty = open.some((e) => isDirty(e.id));
+    let text;
+    let kind = '';
+    if (state.message) ({ text, kind } = state.message);
+    else if (filled < open.length) text = open.length === 1 ? 'Predict the open game to save' : `Predict all ${open.length} open games to save (${filled}/${open.length} done)`;
+    else if (!state.user) text = 'All set. Sign up to save your predictions.';
+    else if (dirty) text = 'All games predicted. Save to lock them in.';
+    else { text = `${open.length === 1 ? 'Prediction' : `All ${open.length} predictions`} saved. You can change ${open.length === 1 ? 'it' : 'them'} until each game locks.`; kind = 'ok'; }
+
+    els.saveMsg.textContent = text;
+    els.saveMsg.className = `save-msg ${kind}`;
+    els.save.textContent = state.user ? (state.saving ? 'Saving…' : 'Save predictions') : 'Sign up to save';
+    els.save.disabled = state.saving || Boolean(state.user && (filled < open.length || !dirty));
+  }
+
+  async function save() {
+    if (!state.user) return openAuth('signup');
+    const cur = currentWeek();
+    const open = cur.week.events.filter((e) => core.isOpen(e));
+    const picks = open.map((e) => ({ id: e.id, pick: parsedPick(e.id) }));
+    if (picks.some((p) => !p.pick)) return setMessage('Predict every open game first.', 'error');
+
+    state.saving = true;
+    renderSavebar();
+    try {
+      await state.store.savePredictions(picks.map((p) => ({ id: p.id, ...p.pick })), state.eventsById);
+      for (const p of picks) {
+        state.saved[p.id] = p.pick;
+        delete state.draft[p.id];
+      }
+      state.saving = false;
+      setMessage(`Saved ${picks.length} prediction${picks.length === 1 ? '' : 's'}.`, 'ok');
+      setTimeout(() => { if (state.message && state.message.kind === 'ok') setMessage(null); }, 4000);
+    } catch (err) {
+      state.saving = false;
+      await loadPredictions();
+      renderWeek();
+      setMessage(err.message, 'error');
+    }
+  }
+
+  // ---- Leaderboard ----------------------------------------------------------
+
+  async function renderBoard() {
+    if (state.store.kind === 'supabase' && !state.user) {
+      const wrap = el('div', 'empty');
+      const btn = el('button', 'primary', 'Sign in');
+      btn.type = 'button';
+      btn.addEventListener('click', () => openAuth('signin'));
+      wrap.append(el('p', '', 'Sign in to see the leaderboard.'), btn);
+      els.board.replaceChildren(wrap);
+      return;
+    }
+    if (!els.board.querySelector('table')) els.board.replaceChildren(el('div', 'empty', 'Loading…'));
+    let rows;
+    try {
+      rows = await state.store.leaderboard(state.events);
+    } catch (err) {
+      els.board.replaceChildren(el('div', 'empty', `Couldn't load the leaderboard (${err.message}).`));
+      return;
+    }
+    if (!rows.length) {
+      els.board.replaceChildren(el('div', 'empty', 'No players yet. Sign up and be the first.'));
+      return;
+    }
+    const table = el('table', 'board');
+    const thead = el('thead');
+    const head = el('tr');
+    ['#', 'Player', 'Pts', 'Exact', 'Results', 'Played'].forEach((h) => head.append(el('th', '', h)));
+    thead.append(head);
+    const body = el('tbody');
+    for (const r of rows) {
+      const tr = el('tr', state.user && r.id === state.user.id ? 'me' : '');
+      tr.append(el('td', '', String(r.rank)), el('td', '', r.name), el('td', 'points', String(r.points)),
+        el('td', '', String(r.exact)), el('td', '', String(r.results)), el('td', '', String(r.scored)));
+      body.append(tr);
+    }
+    table.append(thead, body);
+    const wrap = el('div', 'board-wrap');
+    wrap.append(table);
+    const note = state.store.kind === 'demo' ? el('p', 'muted', 'Demo mode: only players who signed up in this browser are listed.') : null;
+    els.board.replaceChildren(...[wrap, note].filter(Boolean));
+  }
+
+  // ---- Account -------------------------------------------------------------
+
+  function button(text, cls, onClick) {
+    const b = el('button', cls, text);
+    b.type = 'button';
+    b.addEventListener('click', onClick);
     return b;
   }
 
-  function leagueLink(g) {
-    const link = el('button', 'league-link', g.leagueName);
-    link.type = 'button';
-    link.title = `Show only ${g.leagueName}`;
-    link.addEventListener('click', () => {
-      if (state.filter === 'in') setFilter('all');
-      selectLeague(g.leagueKey);
-    });
-    return link;
-  }
-
-  function gameCard(g) {
-    const card = el('article', `card ${g.state}`);
-    const meta = el('div', 'meta');
-    let when = g.detail;
-    if (g.state === 'pre' && g.date) {
-      when = new Date(g.date).toLocaleString([], { weekday: 'short', hour: 'numeric', minute: '2-digit' });
+  function renderAccount() {
+    if (state.user) {
+      els.account.replaceChildren(el('span', 'who', state.user.name), button('Sign out', '', async () => {
+        await state.store.signOut();
+        state.user = null;
+        state.saved = {};
+        state.draft = {};
+        render();
+      }));
+    } else {
+      els.account.replaceChildren(button('Sign in', '', () => openAuth('signin')), button('Sign up', 'primary', () => openAuth('signup')));
     }
-    const label = g.state === 'in' ? `${STATE_LABEL.in} · ${g.detail}`
-      : g.state === 'pre' ? when
-      : g.detail || STATE_LABEL.post;
-    meta.append(el('span', 'state', label));
-    meta.append(state.league === ALL ? leagueLink(g) : el('span', '', g.state === 'pre' ? STATE_LABEL.pre : ''));
-    card.append(meta, teamRow(g.away, g), teamRow(g.home, g));
+  }
 
-    if (g.venue || g.broadcast) {
-      const extra = el('div', 'extra');
-      extra.append(el('span', '', g.venue || ''), el('span', '', g.broadcast ? `📺 ${g.broadcast}` : ''));
-      card.append(extra);
+  let authMode = 'signup';
+  function setAuthMode(mode) {
+    authMode = mode;
+    document.querySelectorAll('.auth-tabs button').forEach((b) => b.classList.toggle('active', b.dataset.mode === mode));
+    $('#name-row').hidden = mode !== 'signup';
+    $('#auth-submit').textContent = mode === 'signup' ? 'Create account' : 'Sign in';
+    $('#auth-password').autocomplete = mode === 'signup' ? 'new-password' : 'current-password';
+    $('#auth-error').textContent = '';
+  }
+
+  function openAuth(mode) {
+    setAuthMode(mode);
+    if (typeof els.auth.showModal === 'function') els.auth.showModal();
+    else els.auth.setAttribute('open', '');
+    (mode === 'signup' ? $('#auth-name') : $('#auth-email')).focus();
+  }
+
+  function closeAuth() {
+    if (typeof els.auth.close === 'function') els.auth.close();
+    else els.auth.removeAttribute('open');
+  }
+
+  async function submitAuth(e) {
+    e.preventDefault();
+    const name = $('#auth-name').value.trim();
+    const email = $('#auth-email').value.trim();
+    const password = $('#auth-password').value;
+    const err = $('#auth-error');
+    if (authMode === 'signup' && (name.length < 2 || name.length > 24)) { err.textContent = 'Enter a name of 2 to 24 characters.'; return; }
+    if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)) { err.textContent = 'Enter a valid email address.'; return; }
+    if (password.length < 6) { err.textContent = 'Password must be at least 6 characters.'; return; }
+
+    const btn = $('#auth-submit');
+    btn.disabled = true;
+    err.textContent = '';
+    try {
+      if (authMode === 'signup') {
+        const res = await state.store.signUp({ name, email, password });
+        if (res.needsConfirm) {
+          setAuthMode('signin');
+          err.textContent = 'Account created. Open the confirmation link we emailed you, then sign in here.';
+          return;
+        }
+        state.user = res.user;
+      } else {
+        state.user = await state.store.signIn({ email, password });
+      }
+      $('#auth-password').value = '';
+      closeAuth();
+      await loadPredictions(); // scores typed before signing in are kept as drafts
+      render();
+    } catch (ex) {
+      err.textContent = ex.message;
+    } finally {
+      btn.disabled = false;
     }
-    return card;
   }
 
-  function renderLiveCount() {
-    els.liveCount.textContent = state.liveCount ? String(state.liveCount) : '';
-  }
+  // ---- Tabs & wiring -------------------------------------------------------
 
   function render() {
-    renderLiveCount();
-    document.body.classList.toggle('live-mode', state.filter === 'in');
-    const events = (state.data && state.data.events) || [];
-    const shown = events
-      .filter((e) => state.filter === 'all' || e.state === state.filter)
-      .sort((a, b) => (STATE_ORDER[a.state] ?? 3) - (STATE_ORDER[b.state] ?? 3)
-        || a.leagueOrder - b.leagueOrder
-        || new Date(a.date) - new Date(b.date));
-
-    if (!shown.length) {
-      const what = { all: 'games', in: 'live games right now', pre: 'upcoming games', post: 'finished games' }[state.filter];
-      const where = state.data ? state.data.leagueName : 'this league';
-      const when = state.filter === 'in' ? '' : ' on this date';
-      els.games.replaceChildren(el('div', 'empty', `No ${what} in ${where}${when}.`));
-      return;
-    }
-    els.games.replaceChildren(...shown.map(gameCard));
+    renderAccount();
+    if (state.tab === 'week') renderWeek();
+    if (state.tab === 'table') renderBoard();
+    renderSavebar();
   }
 
-  function setFilter(filter) {
-    state.filter = filter;
-    document.querySelectorAll('.filters button').forEach((x) => x.classList.toggle('active', x.dataset.filter === filter));
-  }
-
-  document.querySelectorAll('.filters button').forEach((b) => b.addEventListener('click', () => {
-    setFilter(b.dataset.filter);
-    // Live means every league, right now.
-    if (b.dataset.filter === 'in' && (state.league !== ALL || state.date)) {
-      state.date = '';
-      els.date.value = todayIso();
-      if (state.league !== ALL) return selectLeague(ALL);
-      els.games.replaceChildren(el('div', 'empty', 'Loading every league…'));
-      return refresh();
-    }
+  function setTab(tab) {
+    state.tab = tab;
+    document.querySelectorAll('.tabs button').forEach((b) => b.classList.toggle('active', b.dataset.tab === tab));
+    ['week', 'table', 'rules'].forEach((t) => { $(`#tab-${t}`).hidden = t !== tab; });
     render();
-  }));
+  }
 
-  els.date.value = todayIso();
-  els.date.addEventListener('change', () => {
-    if (state.filter === 'in') setFilter('all'); // Live is always "right now"
-    state.date = els.date.value === todayIso() ? '' : els.date.value;
-    state.prevScores.clear();
-    refresh();
-  });
-  $('#today').addEventListener('click', () => {
-    if (state.filter === 'in') setFilter('all');
-    els.date.value = todayIso();
-    state.date = '';
-    refresh();
-  });
-  $('#refresh').addEventListener('click', refresh);
+  function goWeek(delta) {
+    const c = currentWeek();
+    state.weekId = state.weeks[c.index + delta].id;
+    state.message = null;
+    renderWeek();
+  }
+
+  document.querySelectorAll('.tabs button').forEach((b) => b.addEventListener('click', () => setTab(b.dataset.tab)));
+  els.prev.addEventListener('click', () => goWeek(-1));
+  els.next.addEventListener('click', () => goWeek(1));
+  els.save.addEventListener('click', save);
+  $('#auth-form').addEventListener('submit', submitAuth);
+  $('#auth-cancel').addEventListener('click', closeAuth);
+  document.querySelectorAll('.auth-tabs button').forEach((b) => b.addEventListener('click', () => setAuthMode(b.dataset.mode)));
   document.addEventListener('visibilitychange', () => { if (!document.hidden) refresh(); });
+  window.addEventListener('beforeunload', (e) => {
+    if (Object.keys(state.draft).some(isDirty)) { e.preventDefault(); e.returnValue = ''; }
+  });
 
-  loadLeagues()
-    .then(refresh)
-    .catch((err) => setStatus(`Couldn't load leagues: ${err.message}`, true));
+  $('#pts-exact').textContent = core.POINTS.exact;
+  $('#pts-result').textContent = core.POINTS.result;
+
+  (async () => {
+    els.fixtures.replaceChildren(el('div', 'empty', 'Loading fixtures…'));
+    try {
+      state.user = await state.store.init();
+    } catch (err) {
+      setMessage(err.message, 'error');
+    }
+    els.banner.hidden = state.store.kind !== 'demo';
+    await loadPredictions();
+    renderAccount();
+    await refresh();
+  })();
 })();

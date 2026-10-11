@@ -1,8 +1,14 @@
-// Premier League data and betting logic shared by the Node server (require)
-// and the browser (window.KOAS.core). Pure functions only.
+// Premier League score-prediction rules and ESPN parsing, shared by the
+// Node server (require) and the browser (window.KOAS.core). Pure functions only.
 (() => {
-  const LEAGUE = { key: 'epl', name: 'Premier League', sport: 'soccer', league: 'eng.1' };
+  const LEAGUE = { name: 'Premier League', sport: 'soccer', league: 'eng.1' };
   const ESPN_SCOREBOARD = `https://site.api.espn.com/apis/site/v2/sports/${LEAGUE.sport}/${LEAGUE.league}/scoreboard`;
+
+  // Rules. Keep in sync with supabase/schema.sql.
+  const DEADLINE_MS = 2 * 60 * 60 * 1000; // predictions lock 2 hours before kick-off
+  const POINTS = { exact: 3, result: 1 }; // exact score / right result (win, draw or loss)
+  const MAX_GOALS = 20;
+  const WEEK_GAP_MS = 36 * 60 * 60 * 1000; // a 36h+ gap between kick-offs starts a new matchweek
 
   // ---- Dates -------------------------------------------------------------
 
@@ -17,72 +23,7 @@
 
   const isDates = (s) => /^\d{8}(-\d{8})?$/.test(s);
 
-  // ---- Odds --------------------------------------------------------------
-
-  function num(v) {
-    if (v == null || v === '') return null;
-    if (typeof v === 'string' && /^even/i.test(v.trim())) return 100;
-    const n = Number(String(v).replace(/^[ou]/i, '').replace('+', ''));
-    return Number.isFinite(n) && n !== 0 ? n : null;
-  }
-
-  function americanToDecimal(american) {
-    const a = num(american);
-    if (a == null || Math.abs(a) < 100) return null;
-    return Math.round((a > 0 ? 1 + a / 100 : 1 + 100 / Math.abs(a)) * 100) / 100;
-  }
-
-  // Standard UK fractional prices; the closest one is shown.
-  const FRACTIONS = [
-    [1, 10], [1, 8], [1, 6], [1, 5], [2, 9], [1, 4], [2, 7], [1, 3], [4, 11], [2, 5], [4, 9], [1, 2], [8, 15], [4, 7],
-    [8, 13], [4, 6], [8, 11], [4, 5], [5, 6], [10, 11], [1, 1], [11, 10], [6, 5], [5, 4], [11, 8], [6, 4], [13, 8],
-    [7, 4], [15, 8], [2, 1], [85, 40], [9, 4], [5, 2], [11, 4], [3, 1], [10, 3], [7, 2], [4, 1], [9, 2], [5, 1],
-    [11, 2], [6, 1], [13, 2], [7, 1], [15, 2], [8, 1], [9, 1], [10, 1], [11, 1], [12, 1], [14, 1], [16, 1], [18, 1],
-    [20, 1], [25, 1], [33, 1], [40, 1], [50, 1], [66, 1], [80, 1], [100, 1],
-  ];
-
-  function formatOdds(decimal, format) {
-    if (!decimal) return '–';
-    if (format === 'american') {
-      const a = decimal >= 2 ? Math.round((decimal - 1) * 100) : Math.round(-100 / (decimal - 1));
-      return a > 0 ? `+${a}` : String(a);
-    }
-    if (format === 'fractional') {
-      const target = decimal - 1;
-      let best = FRACTIONS[0];
-      for (const f of FRACTIONS) if (Math.abs(f[0] / f[1] - target) < Math.abs(best[0] / best[1] - target)) best = f;
-      return best[0] === best[1] ? 'Evs' : `${best[0]}/${best[1]}`;
-    }
-    return decimal.toFixed(2);
-  }
-
-  // Reads the first odds entry on an ESPN competition. ESPN has used two shapes:
-  // flat (homeTeamOdds.moneyLine, overUnder, overOdds) and nested
-  // (moneyline.home.close.odds, total.over.close.line). Both are handled.
-  function parseOdds(comp) {
-    const o = comp && Array.isArray(comp.odds) ? comp.odds[0] : null;
-    if (!o) return null;
-    const pick = (node) => node && (node.close || node.current || node.open || node);
-    const ml = o.moneyline || {};
-    const tot = o.total || {};
-
-    const home = americanToDecimal((o.homeTeamOdds && o.homeTeamOdds.moneyLine) ?? (pick(ml.home) || {}).odds);
-    const away = americanToDecimal((o.awayTeamOdds && o.awayTeamOdds.moneyLine) ?? (pick(ml.away) || {}).odds);
-    const draw = americanToDecimal((o.drawOdds && o.drawOdds.moneyLine) ?? (pick(ml.draw) || {}).odds);
-
-    const overNode = pick(tot.over) || {};
-    const underNode = pick(tot.under) || {};
-    const line = num(o.overUnder) ?? num(overNode.line);
-    const over = americanToDecimal(o.overOdds ?? overNode.odds);
-    const under = americanToDecimal(o.underOdds ?? underNode.odds);
-
-    const result = home && away && draw ? { home, draw, away } : null;
-    const total = line && over && under ? { line, over, under } : null;
-    if (!result && !total) return null;
-    return { provider: (o.provider && o.provider.name) || null, result, total };
-  }
-
-  // ---- Scoreboard --------------------------------------------------------
+  // ---- ESPN scoreboard ---------------------------------------------------
 
   function normalizeTeam(c = {}) {
     const team = c.team || {};
@@ -93,8 +34,6 @@
       logo: team.logo || (team.logos && team.logos[0] && team.logos[0].href) || null,
       color: team.color ? `#${team.color}` : null,
       score: c.score != null && c.score !== '' ? Number(c.score) : null,
-      form: c.form || null,
-      record: (c.records && c.records[0] && c.records[0].summary) || null,
     };
   }
 
@@ -112,13 +51,10 @@
       state: type.state || 'pre',
       completed: Boolean(type.completed),
       detail: type.shortDetail || type.detail || type.description || '',
-      description: type.description || '',
-      clock: status.displayClock || null,
       venue: (comp.venue && comp.venue.fullName) || null,
       broadcast: (comp.broadcasts || []).flatMap((b) => b.names || []).join(', ') || null,
       home: normalizeTeam(home),
       away: normalizeTeam(away),
-      odds: parseOdds(comp),
     };
   }
 
@@ -127,56 +63,93 @@
     return { events: events.map(normalizeEvent) };
   }
 
-  // ---- Betting -----------------------------------------------------------
+  // ---- Matchweeks --------------------------------------------------------
 
-  const MARKETS = {
-    result: { name: 'Match Result', outcomes: ['home', 'draw', 'away'] },
-    total: { name: 'Total Goals', outcomes: ['over', 'under'] },
-  };
-
-  function selectionLabel(sel) {
-    if (sel.market === 'result') return sel.outcome === 'draw' ? 'Draw' : sel.outcome === 'home' ? sel.home : sel.away;
-    return `${sel.outcome === 'over' ? 'Over' : 'Under'} ${sel.line} goals`;
+  // ESPN's soccer feed has no matchweek number, so fixtures are grouped by
+  // kick-off time. Within a round games are at most ~28h apart (Fri night to
+  // Mon night); between rounds the gap is 50h+, so 36h separates them.
+  function groupMatchweeks(events) {
+    const sorted = [...events].filter((e) => e.date).sort((a, b) => new Date(a.date) - new Date(b.date));
+    const weeks = [];
+    let current = null;
+    let last = 0;
+    for (const e of sorted) {
+      const t = new Date(e.date).getTime();
+      if (!current || t - last >= WEEK_GAP_MS) {
+        current = { id: e.id, start: e.date, events: [] };
+        weeks.push(current);
+      }
+      current.events.push(e);
+      last = t;
+    }
+    weeks.forEach((w) => { w.end = w.events[w.events.length - 1].date; });
+    return weeks;
   }
 
-  // Outcome of one selection once its match is over:
-  // 'won' | 'lost' | 'void' (called off, or a push on a whole-number total), or null if not settled yet.
-  function settleSelection(sel, event) {
-    if (!event || event.state !== 'post') return null;
-    if (!event.completed || event.home.score == null || event.away.score == null) return 'void';
+  // The week to open on: the first one with a game not yet finished, else the latest.
+  function currentWeekIndex(weeks) {
+    const i = weeks.findIndex((w) => w.events.some((e) => e.state !== 'post'));
+    return i === -1 ? weeks.length - 1 : i;
+  }
+
+  // ---- Predictions -------------------------------------------------------
+
+  const deadlineOf = (event) => new Date(new Date(event.date).getTime() - DEADLINE_MS);
+  const isOpen = (event, now = Date.now()) => event.state === 'pre' && now < deadlineOf(event).getTime();
+
+  function validGoals(n) {
+    return Number.isInteger(n) && n >= 0 && n <= MAX_GOALS;
+  }
+
+  const outcome = (h, a) => (h > a ? 'home' : h < a ? 'away' : 'draw');
+
+  // Points for one prediction once the match has finished; null until then
+  // (or if it was called off).
+  function scorePrediction(pred, event) {
+    if (!pred || !event || event.state !== 'post' || !event.completed) return null;
     const h = event.home.score;
     const a = event.away.score;
-    if (sel.market === 'result') {
-      const actual = h > a ? 'home' : h < a ? 'away' : 'draw';
-      return actual === sel.outcome ? 'won' : 'lost';
-    }
-    if (sel.market === 'total') {
-      const goals = h + a;
-      if (goals === sel.line) return 'void';
-      return (goals > sel.line) === (sel.outcome === 'over') ? 'won' : 'lost';
-    }
-    return null;
+    if (h == null || a == null) return null;
+    if (pred.home === h && pred.away === a) return { points: POINTS.exact, kind: 'exact' };
+    if (outcome(pred.home, pred.away) === outcome(h, a)) return { points: POINTS.result, kind: 'result' };
+    return { points: 0, kind: 'miss' };
   }
 
-  // Settles a bet (single = one leg, accumulator = several) from its legs' results.
-  // Returns { status: 'open'|'won'|'lost'|'void', payout }.
-  function settleBet(bet) {
-    const results = bet.legs.map((l) => l.result);
-    if (results.includes('lost')) return { status: 'lost', payout: 0 };
-    if (results.some((r) => !r)) return { status: 'open', payout: 0 };
-    if (results.every((r) => r === 'void')) return { status: 'void', payout: bet.stake };
-    const odds = bet.legs.reduce((p, l) => p * (l.result === 'won' ? l.odds : 1), 1);
-    return { status: 'won', payout: Math.round(bet.stake * odds * 100) / 100 };
+  // Totals per player from their predictions and finished matches.
+  // predictionsByUser: { [userId]: { name, predictions: { [eventId]: {home, away} } } }
+  function leaderboard(predictionsByUser, events) {
+    const byId = Object.fromEntries(events.map((e) => [e.id, e]));
+    const rows = Object.entries(predictionsByUser).map(([id, u]) => {
+      const row = { id, name: u.name, points: 0, exact: 0, results: 0, scored: 0 };
+      for (const [eventId, pred] of Object.entries(u.predictions || {})) {
+        const s = scorePrediction(pred, byId[eventId]);
+        if (!s) continue;
+        row.scored += 1;
+        row.points += s.points;
+        if (s.kind === 'exact') row.exact += 1;
+        if (s.kind === 'result') row.results += 1;
+      }
+      return row;
+    });
+    return rankRows(rows);
   }
 
-  const combinedOdds = (legs) => Math.round(legs.reduce((p, l) => p * l.odds, 1) * 100) / 100;
+  // Sort by points, then exact scores; tied players share a rank.
+  function rankRows(rows) {
+    rows.sort((a, b) => b.points - a.points || b.exact - a.exact || a.name.localeCompare(b.name));
+    rows.forEach((r, i) => {
+      const prev = rows[i - 1];
+      r.rank = prev && prev.points === r.points && prev.exact === r.exact ? prev.rank : i + 1;
+    });
+    return rows;
+  }
 
   const api = {
-    LEAGUE, ESPN_SCOREBOARD, MARKETS,
+    LEAGUE, ESPN_SCOREBOARD, DEADLINE_MS, POINTS, MAX_GOALS,
     ymd, dateRange, isDates,
-    americanToDecimal, formatOdds, parseOdds,
     normalizeEvent, normalizeScoreboard,
-    selectionLabel, settleSelection, settleBet, combinedOdds,
+    groupMatchweeks, currentWeekIndex,
+    deadlineOf, isOpen, validGoals, scorePrediction, leaderboard, rankRows,
   };
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
   else (self.KOAS = self.KOAS || {}).core = api;

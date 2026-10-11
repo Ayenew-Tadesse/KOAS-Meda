@@ -1,7 +1,6 @@
 const http = require('http');
 const fs = require('fs');
 const path = require('path');
-const { LEAGUES } = require('./public/leagues');
 const { getScoreboard } = require('./src/espn');
 
 const PORT = Number(process.env.PORT || 3000);
@@ -34,17 +33,11 @@ function serveStatic(req, res, pathname) {
 async function handle(req, res) {
   const url = new URL(req.url, `http://${req.headers.host || 'localhost'}`);
 
-  if (url.pathname === '/api/leagues') {
-    return sendJson(res, 200, LEAGUES.map(({ key, name, sport }) => ({ key, name, sport })));
-  }
-
   if (url.pathname === '/api/scoreboard') {
-    const league = url.searchParams.get('league') || 'nfl';
-    const date = url.searchParams.get('date') || undefined;
     try {
-      return sendJson(res, 200, await getScoreboard(league, date));
+      return sendJson(res, 200, await getScoreboard(url.searchParams.get('dates')));
     } catch (err) {
-      console.error(`[scoreboard] ${league}: ${err.message}`);
+      console.error(`[scoreboard] ${err.message}`);
       return sendJson(res, err.status || 502, { error: err.message });
     }
   }
@@ -64,7 +57,7 @@ const server = http.createServer((req, res) => {
 
 if (require.main === module) {
   server.listen(PORT, () => {
-    console.log(`KOAS Meda live scores on http://localhost:${PORT}${process.env.MOCK === '1' ? ' (mock data)' : ''}`);
+    console.log(`KOAS Meda predictor on http://localhost:${PORT}${process.env.MOCK === '1' ? ' (mock data)' : ''}`);
   });
 }
 
