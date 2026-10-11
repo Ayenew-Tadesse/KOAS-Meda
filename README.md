@@ -8,9 +8,10 @@ live scores come from ESPN's public feed.
 
 1. **Sign up** with a name, email and password.
 2. **Predict the exact score of every game** in the matchweek, then save. You
-   can change predictions until they lock.
-3. **Each game locks 2 hours before kick-off.** After that its prediction can't
-   be added or changed, and other players' picks for it become visible.
+   can change predictions until they close.
+3. **Predictions close 2 hours before the matchweek's first kick-off**, for all
+   of that week's games at once. After that nothing can be added or changed,
+   and other players' picks become visible.
 4. **Points:** 3 for the exact score, 1 for the right result (home win, draw or
    away win) with the wrong score, 0 otherwise. Postponed or abandoned games
    score nothing.

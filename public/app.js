@@ -238,9 +238,9 @@
     const foot = el('div', 'fx-foot');
     let status;
     if (open) {
-      status = el('span', 'status open', `${fmtTime(ev.date)} kick-off · locks ${fmtLock(core.deadlineOf(ev))}`);
+      status = el('span', 'status open', `${fmtTime(ev.date)} kick-off`);
     } else if (ev.state === 'pre') {
-      status = el('span', 'status locked', '🔒 Predictions locked');
+      status = el('span', 'status locked', `🔒 ${fmtTime(ev.date)} kick-off · predictions closed`);
     } else if (ev.state === 'in') {
       status = el('span', 'status live', `LIVE ${ev.detail}`);
     } else {
@@ -316,17 +316,17 @@
       if (done.length) parts.push(`${done.reduce((n, s) => n + s.points, 0)} pts so far`);
     }
     if (open.length) {
-      const next = Math.min(...open.map((e) => core.deadlineOf(e).getTime()));
-      parts.push(`next lock ${fmtLock(next)} (${fmtIn(next - Date.now())})`);
+      const close = week.lockAt.getTime();
+      parts.push(`predictions close ${fmtLock(close)} (${fmtIn(close - Date.now())})`);
     } else if (week.events.every((e) => e.state === 'post')) {
       parts.push('finished');
     } else {
-      parts.push('all predictions locked');
+      parts.push('predictions closed');
     }
     return parts.join(' · ');
   }
 
-  // Re-render the moment the next game in view locks.
+  // Re-render the moment the matchweek in view closes.
   function scheduleLockCheck(week) {
     clearTimeout(state.lockTimer);
     const waits = week.events.filter((e) => core.isOpen(e)).map((e) => core.deadlineOf(e).getTime() - Date.now());
@@ -355,7 +355,7 @@
     else if (filled < open.length) text = open.length === 1 ? 'Predict the open game to save' : `Predict all ${open.length} open games to save (${filled}/${open.length} done)`;
     else if (!state.user) text = 'All set. Sign up to save your predictions.';
     else if (dirty) text = 'All games predicted. Save to lock them in.';
-    else { text = `${open.length === 1 ? 'Prediction' : `All ${open.length} predictions`} saved. You can change ${open.length === 1 ? 'it' : 'them'} until each game locks.`; kind = 'ok'; }
+    else { text = `${open.length === 1 ? 'Prediction' : `All ${open.length} predictions`} saved. You can change ${open.length === 1 ? 'it' : 'them'} until ${fmtLock(cur.week.lockAt)}.`; kind = 'ok'; }
 
     els.saveMsg.textContent = text;
     els.saveMsg.className = `save-msg ${kind}`;

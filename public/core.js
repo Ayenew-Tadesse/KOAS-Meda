@@ -5,7 +5,7 @@
   const ESPN_SCOREBOARD = `https://site.api.espn.com/apis/site/v2/sports/${LEAGUE.sport}/${LEAGUE.league}/scoreboard`;
 
   // Rules. Keep in sync with supabase/schema.sql.
-  const DEADLINE_MS = 2 * 60 * 60 * 1000; // predictions lock 2 hours before kick-off
+  const DEADLINE_MS = 2 * 60 * 60 * 1000; // a matchweek closes 2 hours before its first kick-off
   const POINTS = { exact: 3, result: 1 }; // exact score / right result (win, draw or loss)
   const MAX_GOALS = 20;
   const WINDOW_DAYS = 7; // fixtures shown: 7 days back to 7 days ahead (two weeks)
@@ -87,7 +87,13 @@
       current.events.push(e);
       last = t;
     }
-    weeks.forEach((w) => { w.end = w.events[w.events.length - 1].date; });
+    weeks.forEach((w) => {
+      w.end = w.events[w.events.length - 1].date;
+      w.lockAt = new Date(new Date(w.start).getTime() - DEADLINE_MS);
+      // Every game shares its matchweek's deadline (set on the event objects
+      // passed in, so isOpen() works on them anywhere).
+      w.events.forEach((e) => { e.lockAt = w.lockAt; });
+    });
     return weeks;
   }
 
@@ -99,7 +105,9 @@
 
   // ---- Predictions -------------------------------------------------------
 
-  const deadlineOf = (event) => new Date(new Date(event.date).getTime() - DEADLINE_MS);
+  // When predictions close for this game: 2 hours before the first kick-off
+  // of its matchweek (set by groupMatchweeks), else 2 hours before its own.
+  const deadlineOf = (event) => event.lockAt || new Date(new Date(event.date).getTime() - DEADLINE_MS);
   const isOpen = (event, now = Date.now()) => event.state === 'pre' && now < deadlineOf(event).getTime();
 
   function validGoals(n) {

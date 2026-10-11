@@ -28,6 +28,20 @@ test('predictions lock 2 hours before kick-off', () => {
   assert.strictEqual(core.deadlineOf(game('d', '2026-10-17T14:00:00Z')).toISOString(), '2026-10-17T12:00:00.000Z');
 });
 
+test('a whole matchweek closes 2 hours before its first kick-off', () => {
+  const now = Date.now();
+  const first = game('first', at(now + 90 * 60000)); // kicks off in 90 minutes
+  const later = game('later', at(now + 26 * HOUR));
+  const nextWeek = game('next', at(now + 5 * 24 * HOUR));
+  const weeks = core.groupMatchweeks([nextWeek, later, first]);
+  assert.strictEqual(weeks.length, 2);
+  assert.strictEqual(core.isOpen(later, now), false, 'closed with the rest of its week');
+  assert.strictEqual(core.isOpen(first, now), false);
+  assert.strictEqual(core.isOpen(nextWeek, now), true);
+  assert.strictEqual(weeks[0].lockAt.getTime(), Date.parse(first.date) - 2 * HOUR);
+  assert.strictEqual(core.deadlineOf(later).getTime(), weeks[0].lockAt.getTime());
+});
+
 test('scores 3 for exact, 1 for right result, 0 otherwise', () => {
   const ft = game('x', at(0), 'post', 2, 1);
   assert.deepStrictEqual(core.scorePrediction({ home: 2, away: 1 }, ft), { points: 3, kind: 'exact' });

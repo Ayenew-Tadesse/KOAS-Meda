@@ -67,7 +67,7 @@
     async savePredictions(list, eventsById) {
       if (!this.user) throw new StoreError('Sign in to save predictions.');
       const late = list.filter((p) => !core.isOpen(eventsById[p.id]));
-      if (late.length) throw new StoreError('A game locked before you saved, so nothing was saved. Save again to keep the rest.');
+      if (late.length) throw new StoreError('Predictions for this matchweek closed before you saved, so nothing was saved.');
       const all = ls.get('koas.predictions', {});
       const mine = all[this.user.id] || {};
       for (const p of list) mine[p.id] = { home: p.home, away: p.away };
@@ -97,7 +97,7 @@
 
   function friendly(error) {
     const msg = (error && error.message) || String(error);
-    if (/row-level security/i.test(msg)) return 'A game locked before you saved, so nothing was saved. Save again to keep the rest.';
+    if (/row-level security/i.test(msg)) return 'Predictions for this matchweek closed before you saved, so nothing was saved.';
     if (/foreign key/i.test(msg)) return 'A game isn\'t open for predictions yet. Try again in a few minutes.';
     if (/Invalid login credentials/i.test(msg)) return 'Email or password is incorrect.';
     if (/Email not confirmed/i.test(msg)) return 'Confirm your email first: open the link we sent you, then sign in.';

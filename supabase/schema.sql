@@ -3,7 +3,7 @@
 -- It is safe to run again after edits.
 --
 -- Rules enforced here (keep in sync with public/core.js):
---   * predictions lock 2 hours before kick-off
+--   * a matchweek's predictions close 2 hours before its first kick-off
 --   * 3 points for the exact score, 1 for the right result (win/draw/loss)
 --   * fixtures and results come from ESPN via sync_fixtures(), never from players
 
@@ -71,11 +71,28 @@ create table if not exists public.predictions (
   primary key (user_id, fixture_id)
 );
 
+-- First kick-off of the matchweek a fixture belongs to. Matchweeks are runs
+-- of fixtures with less than 36 hours between consecutive kick-offs (same
+-- grouping as groupMatchweeks in public/core.js).
+create or replace function public.round_start(fid text) returns timestamptz
+language sql stable security definer set search_path = public as $$
+  with ordered as (
+    select id, kickoff,
+      case when lag(kickoff) over w is null or kickoff - lag(kickoff) over w >= interval '36 hours' then 1 else 0 end as new_round
+    from public.fixtures
+    window w as (order by kickoff, id)
+  ), rounds as (
+    select id, kickoff, sum(new_round) over (order by kickoff, id) as round from ordered
+  )
+  select min(kickoff) from rounds where round = (select round from rounds where id = fid);
+$$;
+
+-- Predictions for a whole matchweek close 2 hours before its first kick-off.
 create or replace function public.fixture_open(fid text) returns boolean
 language sql stable security definer set search_path = public as $$
   select exists (
     select 1 from public.fixtures f
-    where f.id = fid and f.state = 'pre' and now() < f.kickoff - interval '2 hours'
+    where f.id = fid and f.state = 'pre' and now() < public.round_start(fid) - interval '2 hours'
   );
 $$;
 
