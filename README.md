@@ -23,7 +23,10 @@ Premier League, La Liga, Serie A, Bundesliga, Ligue 1, Champions League, MLS.
 
 **Quickest:** open `public/index.html` in your browser (double-click it). With
 no server running, the page fetches scores straight from ESPN. You can also
-host the `public/` folder on any static host (GitHub Pages, Netlify, …).
+host it on any static host. On GitHub Pages (Settings → Pages → Deploy from a
+branch, folder `/ (root)`) the site lives at
+https://ayenew-tadesse.github.io/KOAS-Meda/ and the root `index.html` forwards to
+the app.
 
 **With the Node server** (adds caching and keeps working if ESPN briefly fails).
 Requires Node.js 18+:
