@@ -154,6 +154,29 @@
       if (error) throw new StoreError(friendly(error));
     }
 
+    // Fixtures and scores from the database, which syncs them from ESPN.
+    async fixtures() {
+      const span = (core.WINDOW_DAYS + 1) * 24 * 3600 * 1000;
+      const { data, error } = await this.sb.from('fixtures').select('*')
+        .gte('kickoff', new Date(Date.now() - span).toISOString())
+        .lte('kickoff', new Date(Date.now() + span).toISOString())
+        .order('kickoff');
+      if (error) throw new StoreError(friendly(error));
+      const team = (r, side) => ({
+        id: null,
+        name: r[`${side}_team`],
+        short: r[`${side}_short`] || '',
+        logo: r[`${side}_logo`] || null,
+        color: r[`${side}_color`] ? `#${r[`${side}_color`]}` : null,
+        score: r[`${side}_score`],
+      });
+      return data.map((r) => ({
+        id: r.id, date: r.kickoff, state: r.state, completed: r.completed,
+        detail: r.detail || '', venue: r.venue, broadcast: r.broadcast,
+        home: team(r, 'home'), away: team(r, 'away'),
+      }));
+    }
+
     async leaderboard() {
       const { data, error } = await this.sb.rpc('leaderboard');
       if (error) throw new StoreError(friendly(error));

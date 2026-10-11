@@ -48,6 +48,18 @@ create table if not exists public.fixtures (
   updated_at timestamptz not null default now()
 );
 
+-- Display details shown on the website (added in v2; safe to re-run).
+alter table public.fixtures
+  add column if not exists home_short text,
+  add column if not exists away_short text,
+  add column if not exists home_logo text,
+  add column if not exists away_logo text,
+  add column if not exists home_color text,
+  add column if not exists away_color text,
+  add column if not exists detail text,
+  add column if not exists venue text,
+  add column if not exists broadcast text;
+
 -- Predictions ------------------------------------------------------------
 
 create table if not exists public.predictions (
@@ -131,25 +143,38 @@ revoke all on function public.leaderboard() from public, anon;
 grant execute on function public.leaderboard() to authenticated;
 
 -- ESPN sync --------------------------------------------------------------
+-- ESPN's scoreboard accepts one day per request (date ranges return 400),
+-- so fixtures are fetched day by day.
 
-create or replace function public.sync_fixtures() returns int
+drop function if exists public.sync_fixtures();
+
+create or replace function public.sync_fixtures_day(day date) returns int
 language plpgsql security definer set search_path = public, extensions as $$
 declare
-  url text := 'https://site.api.espn.com/apis/site/v2/sports/soccer/eng.1/scoreboard?limit=200&dates='
-    || to_char(now() - interval '14 days', 'YYYYMMDD') || '-' || to_char(now() + interval '35 days', 'YYYYMMDD');
+  resp extensions.http_response;
   body jsonb;
   ev jsonb;
+  comp jsonb;
   home jsonb;
   away jsonb;
   st text;
   n int := 0;
 begin
-  select content::jsonb into body from extensions.http_get(url);
+  resp := extensions.http_get(
+    'https://site.api.espn.com/apis/site/v2/sports/soccer/eng.1/scoreboard?dates=' || to_char(day, 'YYYYMMDD'));
+  if resp.status <> 200 then
+    raise warning 'ESPN returned % for %', resp.status, day;
+    return 0;
+  end if;
+  body := resp.content::jsonb;
   for ev in select * from jsonb_array_elements(coalesce(body -> 'events', '[]'::jsonb)) loop
-    select c into home from jsonb_array_elements(ev -> 'competitions' -> 0 -> 'competitors') c where c ->> 'homeAway' = 'home';
-    select c into away from jsonb_array_elements(ev -> 'competitions' -> 0 -> 'competitors') c where c ->> 'homeAway' = 'away';
+    comp := ev -> 'competitions' -> 0;
+    select c into home from jsonb_array_elements(comp -> 'competitors') c where c ->> 'homeAway' = 'home';
+    select c into away from jsonb_array_elements(comp -> 'competitors') c where c ->> 'homeAway' = 'away';
     st := coalesce(ev -> 'status' -> 'type' ->> 'state', 'pre');
-    insert into public.fixtures as f (id, kickoff, home_team, away_team, home_score, away_score, state, completed, updated_at)
+    insert into public.fixtures as f (
+      id, kickoff, home_team, away_team, home_score, away_score, state, completed,
+      home_short, away_short, home_logo, away_logo, home_color, away_color, detail, venue, broadcast, updated_at)
     values (
       ev ->> 'id',
       (ev ->> 'date')::timestamptz,
@@ -159,20 +184,57 @@ begin
       case when st <> 'pre' then nullif(away ->> 'score', '')::int end,
       st,
       coalesce((ev -> 'status' -> 'type' ->> 'completed')::boolean, false),
+      home -> 'team' ->> 'abbreviation',
+      away -> 'team' ->> 'abbreviation',
+      home -> 'team' ->> 'logo',
+      away -> 'team' ->> 'logo',
+      home -> 'team' ->> 'color',
+      away -> 'team' ->> 'color',
+      ev -> 'status' -> 'type' ->> 'shortDetail',
+      comp -> 'venue' ->> 'fullName',
+      (select string_agg(nm, ', ') from jsonb_array_elements(coalesce(comp -> 'broadcasts', '[]'::jsonb)) b,
+         jsonb_array_elements_text(coalesce(b -> 'names', '[]'::jsonb)) nm),
       now()
     )
     on conflict (id) do update set
       kickoff = excluded.kickoff, home_team = excluded.home_team, away_team = excluded.away_team,
       home_score = excluded.home_score, away_score = excluded.away_score,
-      state = excluded.state, completed = excluded.completed, updated_at = now();
+      state = excluded.state, completed = excluded.completed,
+      home_short = excluded.home_short, away_short = excluded.away_short,
+      home_logo = excluded.home_logo, away_logo = excluded.away_logo,
+      home_color = excluded.home_color, away_color = excluded.away_color,
+      detail = excluded.detail, venue = excluded.venue, broadcast = excluded.broadcast,
+      updated_at = now();
     n := n + 1;
   end loop;
   return n;
 end $$;
 
-revoke all on function public.sync_fixtures() from public, anon, authenticated;
+-- Syncs every day from days_back before today to days_ahead after it.
+-- A failing day is skipped (and logged) so it can't stop the rest.
+create or replace function public.sync_fixtures(days_back int, days_ahead int) returns int
+language plpgsql security definer set search_path = public, extensions as $$
+declare
+  d date;
+  n int := 0;
+begin
+  for d in select generate_series(current_date - days_back, current_date + days_ahead, interval '1 day')::date loop
+    begin
+      n := n + public.sync_fixtures_day(d);
+    exception when others then
+      raise warning 'sync for % failed: %', d, sqlerrm;
+    end;
+  end loop;
+  return n;
+end $$;
 
--- Refresh fixtures and results every 5 minutes, and once right now.
-select cron.unschedule(jobid) from cron.job where jobname = 'koas-sync-fixtures';
-select cron.schedule('koas-sync-fixtures', '*/5 * * * *', 'select public.sync_fixtures()');
-select public.sync_fixtures();
+revoke all on function public.sync_fixtures_day(date) from public, anon, authenticated;
+revoke all on function public.sync_fixtures(int, int) from public, anon, authenticated;
+
+-- Today's games every minute (live scores); the coming week every 30 minutes.
+select cron.unschedule(jobid) from cron.job where jobname in ('koas-sync-fixtures', 'koas-sync-live');
+select cron.schedule('koas-sync-live', '* * * * *', 'select public.sync_fixtures(1, 0)');
+select cron.schedule('koas-sync-fixtures', '*/30 * * * *', 'select public.sync_fixtures(2, 7)');
+
+-- Load the past week and the coming week now. The number shown is how many games were loaded.
+select public.sync_fixtures(7, 7) as games_loaded;

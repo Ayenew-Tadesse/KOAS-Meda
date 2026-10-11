@@ -8,20 +8,25 @@
   const DEADLINE_MS = 2 * 60 * 60 * 1000; // predictions lock 2 hours before kick-off
   const POINTS = { exact: 3, result: 1 }; // exact score / right result (win, draw or loss)
   const MAX_GOALS = 20;
+  const WINDOW_DAYS = 7; // fixtures shown: 7 days back to 7 days ahead (two weeks)
   const WEEK_GAP_MS = 36 * 60 * 60 * 1000; // a 36h+ gap between kick-offs starts a new matchweek
 
   // ---- Dates -------------------------------------------------------------
 
   const ymd = (d) => `${d.getFullYear()}${String(d.getMonth() + 1).padStart(2, '0')}${String(d.getDate()).padStart(2, '0')}`;
 
-  // ESPN accepts a single day (YYYYMMDD) or a range (YYYYMMDD-YYYYMMDD).
-  function dateRange(from, daysBack, daysAhead) {
-    const start = new Date(from); start.setDate(start.getDate() - daysBack);
-    const end = new Date(from); end.setDate(end.getDate() + daysAhead);
-    return `${ymd(start)}-${ymd(end)}`;
+  // ESPN's scoreboard takes one day per request (YYYYMMDD); date ranges return 400.
+  function days(from, daysBack, daysAhead) {
+    const out = [];
+    for (let i = -daysBack; i <= daysAhead; i += 1) {
+      const d = new Date(from);
+      d.setDate(d.getDate() + i);
+      out.push(ymd(d));
+    }
+    return out;
   }
 
-  const isDates = (s) => /^\d{8}(-\d{8})?$/.test(s);
+  const isDates = (s) => /^\d{8}$/.test(s);
 
   // ---- ESPN scoreboard ---------------------------------------------------
 
@@ -145,8 +150,8 @@
   }
 
   const api = {
-    LEAGUE, ESPN_SCOREBOARD, DEADLINE_MS, POINTS, MAX_GOALS,
-    ymd, dateRange, isDates,
+    LEAGUE, ESPN_SCOREBOARD, DEADLINE_MS, POINTS, MAX_GOALS, WINDOW_DAYS,
+    ymd, days, isDates,
     normalizeEvent, normalizeScoreboard,
     groupMatchweeks, currentWeekIndex,
     deadlineOf, isOpen, validGoals, scorePrediction, leaderboard, rankRows,

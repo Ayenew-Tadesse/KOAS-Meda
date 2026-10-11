@@ -30,7 +30,8 @@ and a shared leaderboard. Free to set up:
 1. Create a project at [supabase.com](https://supabase.com).
 2. In the dashboard open **SQL Editor -> New query**, paste all of
    `supabase/schema.sql`, and press **Run**. This creates the tables and rules,
-   loads the fixtures from ESPN, and refreshes them every 5 minutes.
+   loads the past week's and coming week's games from ESPN, and keeps them
+   updated (today's games every minute, the rest every 30 minutes).
 3. Open **Project Settings -> API** and copy the **Project URL** and the
    **anon public** key into `public/config.js`. Both are safe to publish.
 4. Optional: under **Authentication -> Providers -> Email** you can turn off

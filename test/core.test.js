@@ -81,7 +81,9 @@ test('leaderboard ranks by points then exact scores, ties share a rank', () => {
 test('validates goals and date ranges', () => {
   assert.ok(core.validGoals(0) && core.validGoals(20));
   assert.ok(!core.validGoals(-1) && !core.validGoals(21) && !core.validGoals(1.5));
-  assert.ok(core.isDates('20261011') && core.isDates('20261001-20261031'));
+  assert.ok(core.isDates('20261011') && !core.isDates('20261001-20261031'));
   assert.ok(!core.isDates('2026-10-11') && !core.isDates(''));
-  assert.strictEqual(core.dateRange(new Date(2026, 9, 11), 14, 35), '20260927-20261115');
+  const d = core.days(new Date(2026, 9, 11), 2, 1);
+  assert.deepStrictEqual(d, ['20261009', '20261010', '20261011', '20261012']);
+  assert.strictEqual(core.days(new Date(2026, 9, 11), 21, 35).length, 57);
 });

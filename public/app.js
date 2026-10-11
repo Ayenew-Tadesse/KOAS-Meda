@@ -58,23 +58,52 @@
 
   // ---- Data ---------------------------------------------------------------
 
-  // Our Node server's /api when it's running, otherwise ESPN directly
-  // (GitHub Pages, or index.html opened from disk).
+  // With Supabase connected, fixtures come from the database (one request).
+  // Otherwise from ESPN, one day per request: our Node server's /api when
+  // it's running, else ESPN directly (GitHub Pages, or a file opened from disk).
   let source = location.protocol === 'file:' ? 'direct' : null;
 
-  async function fetchEvents() {
-    const dates = core.dateRange(new Date(), 14, 35);
+  async function fetchDay(day) {
     if (source !== 'direct') {
       try {
-        const res = await fetch(`api/scoreboard?dates=${dates}`);
+        const res = await fetch(`api/scoreboard?dates=${day}`);
         const body = await res.json();
         if (res.ok && Array.isArray(body.events)) { source = 'server'; return body.events; }
       } catch { /* no server */ }
       source = 'direct';
     }
-    const res = await fetch(`${core.ESPN_SCOREBOARD}?limit=200&dates=${dates}`);
+    const res = await fetch(`${core.ESPN_SCOREBOARD}?dates=${day}`);
     if (!res.ok) throw new Error(`ESPN responded ${res.status}`);
     return core.normalizeScoreboard(await res.json()).events;
+  }
+
+  // Runs fn over items, a few at a time, so dozens of days don't flood ESPN.
+  async function mapLimit(items, limit, fn) {
+    const out = new Array(items.length);
+    let next = 0;
+    const worker = async () => {
+      while (next < items.length) {
+        const i = next++;
+        out[i] = await fn(items[i]).then((v) => ({ ok: true, v }), (e) => ({ ok: false, e }));
+      }
+    };
+    await Promise.all(Array.from({ length: limit }, worker));
+    return out;
+  }
+
+  async function fetchEvents() {
+    if (state.store.fixtures) return state.store.fixtures();
+    // First load: the past week and the coming week. After that only yesterday
+    // and today can change, so just those are refreshed and merged in.
+    const first = !state.events.length;
+    const days = first ? core.days(new Date(), core.WINDOW_DAYS, core.WINDOW_DAYS) : core.days(new Date(), 1, 0);
+    if (source === null) await fetchDay(days[0]).catch(() => {}); // settle server vs direct once
+    const results = await mapLimit(days, 6, fetchDay);
+    const ok = results.filter((r) => r.ok);
+    if (!ok.length) throw results[0].e;
+    const byId = first ? {} : { ...state.eventsById };
+    for (const r of ok) for (const e of r.v) byId[e.id] = e;
+    return Object.values(byId);
   }
 
   async function refresh() {
@@ -239,7 +268,7 @@
     if (!cur) {
       els.weekTitle.textContent = 'Matchweek';
       els.weekSummary.textContent = '';
-      els.fixtures.replaceChildren(el('div', 'empty', 'No Premier League fixtures in the next few weeks.'));
+      els.fixtures.replaceChildren(el('div', 'empty', 'No Premier League games in the past week or the coming week.'));
       els.prev.disabled = els.next.disabled = true;
       renderSavebar();
       return;
