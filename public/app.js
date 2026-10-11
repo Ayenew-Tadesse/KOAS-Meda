@@ -220,47 +220,39 @@
     return input;
   }
 
+  // The line under the score boxes: kick-off time before the game, the
+  // minute or HT while it's on, FT (or why it was called off) after.
+  function matchStatus(ev, open) {
+    if (ev.state === 'pre') return el('span', `status ${open ? 'open' : 'locked'}`, `${open ? '' : '🔒 '}${fmtTime(ev.date)}`);
+    if (ev.state === 'in') return el('span', 'status live', ev.detail || 'LIVE');
+    if (!ev.completed) return el('span', 'status', `${ev.detail || 'Called off'} · no points`);
+    return el('span', 'status', ev.detail || 'FT');
+  }
+
   function fixtureRow(ev) {
     const open = core.isOpen(ev);
-    const row = el('div', 'fx');
-    const main = el('div', 'fx-main');
+    const card = el('article', `fx ${ev.state}`);
     const mid = el('div', 'mid');
 
     if (open) {
       mid.append(goalInput(ev, 'home'), el('span', 'dash', '–'), goalInput(ev, 'away'));
     } else if (ev.state === 'pre') {
-      mid.append(el('span', 'ko', fmtTime(ev.date)));
+      mid.append(el('span', 'vs', 'vs'));
     } else {
       mid.append(el('span', 'score', `${ev.home.score ?? '-'} – ${ev.away.score ?? '-'}`));
     }
-    main.append(teamCell(ev.home, 'home'), mid, teamCell(ev.away, 'away'));
-
-    const foot = el('div', 'fx-foot');
-    let status;
-    if (open) {
-      status = el('span', 'status open', `${fmtTime(ev.date)} kick-off`);
-    } else if (ev.state === 'pre') {
-      status = el('span', 'status locked', `🔒 ${fmtTime(ev.date)} kick-off · predictions closed`);
-    } else if (ev.state === 'in') {
-      status = el('span', 'status live', `LIVE ${ev.detail}`);
-    } else {
-      status = el('span', 'status', ev.completed ? ev.detail || 'Full time' : `${ev.detail || 'Called off'} · no points`);
-    }
-    foot.append(status);
+    card.append(teamCell(ev.home, 'home'), mid, teamCell(ev.away, 'away'), matchStatus(ev, open));
 
     if (!open && state.user) {
-      const pickWrap = el('span', 'pick');
+      const pickWrap = el('div', 'pick');
       const pick = state.saved[ev.id];
       pickWrap.append(el('span', '', pick ? `Your pick ${pick.home} – ${pick.away}` : 'No prediction'));
-      const s = core.scorePrediction(pick, ev);
-      if (s) pickWrap.append(el('span', `pts${s.points ? '' : ' zero'}`, `+${s.points}`));
+      const sc = core.scorePrediction(pick, ev);
+      if (sc) pickWrap.append(el('span', `pts${sc.points ? '' : ' zero'}`, `+${sc.points}`));
       else if (ev.state === 'post' && ev.completed && !pick) pickWrap.append(el('span', 'pts zero', '+0'));
-      foot.append(pickWrap);
-    } else if (open && ev.broadcast) {
-      foot.append(el('span', '', ev.broadcast));
+      card.append(pickWrap);
     }
-    row.append(main, foot);
-    return row;
+    return card;
   }
 
   function renderWeek() {
@@ -293,7 +285,7 @@
     }
     els.fixtures.replaceChildren(...days.map((d) => {
       const wrap = el('div', 'day');
-      const list = el('div', 'day-list');
+      const list = el('div', 'day-cards');
       list.append(...d.events.map(fixtureRow));
       wrap.append(el('h3', '', d.label), list);
       return wrap;

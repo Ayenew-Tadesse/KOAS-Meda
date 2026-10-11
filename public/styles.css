@@ -82,11 +82,15 @@ h1, h2 { font-family: var(--font-display); letter-spacing: 0.01em; text-wrap: ba
   margin: 0 0 6px; font-size: 13px; font-weight: 600; color: var(--muted);
   text-transform: uppercase; letter-spacing: 0.08em;
 }
-.day-list { background: var(--surface); border: 1px solid var(--line); border-radius: 12px; overflow: hidden; }
+.day-cards { display: grid; gap: 10px; }
 
-.fx { display: grid; gap: 6px; padding: 12px 14px; border-top: 1px solid var(--line); }
-.fx:first-child { border-top: 0; }
-.fx-main { display: grid; grid-template-columns: 1fr auto 1fr; align-items: center; gap: 10px; }
+/* One card per game: teams either side of the score boxes, with the
+   kick-off time / minute / FT directly underneath the boxes. */
+.fx {
+  display: grid; grid-template-columns: 1fr auto 1fr; align-items: center; column-gap: 10px; row-gap: 4px;
+  background: var(--surface); border: 1px solid var(--line); border-radius: 12px; padding: 14px;
+}
+.fx.in { border-color: var(--live); }
 .team { display: flex; align-items: center; gap: 8px; min-width: 0; }
 .team.home { justify-content: flex-end; text-align: right; }
 .team .nm { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 500; }
@@ -97,7 +101,7 @@ h1, h2 { font-family: var(--font-display); letter-spacing: 0.01em; text-wrap: ba
 }
 .team .nm-short { display: none; font-weight: 600; }
 
-.mid { display: flex; align-items: center; gap: 6px; font-family: var(--font-display); }
+.mid { display: flex; align-items: center; justify-content: center; gap: 6px; font-family: var(--font-display); min-width: 100px; }
 .goal {
   width: 44px; height: 44px; text-align: center; font-size: 22px; font-weight: 700;
   font-family: var(--font-display);
@@ -108,19 +112,20 @@ h1, h2 { font-family: var(--font-display); letter-spacing: 0.01em; text-wrap: ba
 .goal:focus { border-color: var(--pitch); outline: none; }
 .goal.filled { border-color: var(--pitch); }
 .dash { color: var(--muted); font-size: 20px; }
-.score {
-  min-width: 76px; text-align: center; font-size: 26px; font-weight: 700;
-  font-variant-numeric: tabular-nums; letter-spacing: 0.04em;
-}
-.ko { min-width: 76px; text-align: center; font-size: 20px; font-weight: 600; color: var(--muted); }
+.score { font-size: 28px; font-weight: 700; font-variant-numeric: tabular-nums; letter-spacing: 0.04em; }
+.vs { font-size: 18px; font-weight: 600; color: var(--muted); text-transform: uppercase; }
 
-.fx-foot { display: flex; justify-content: space-between; gap: 8px; font-size: 13px; color: var(--muted); flex-wrap: wrap; }
-.status { font-weight: 600; }
+.fx .status {
+  grid-column: 2; text-align: center; font-size: 13px; font-weight: 600; color: var(--muted);
+  font-variant-numeric: tabular-nums; white-space: nowrap;
+}
+.status.open { color: var(--ok); }
 .status.live { color: var(--live); }
 .status.live::before { content: "● "; animation: pulse 1.6s infinite; }
-.status.locked { color: var(--muted); }
-.status.open { color: var(--ok); }
-.pick { display: inline-flex; gap: 6px; align-items: center; }
+.pick {
+  grid-column: 1 / -1; display: flex; justify-content: center; align-items: center; gap: 8px;
+  margin-top: 6px; padding-top: 8px; border-top: 1px solid var(--line); font-size: 13px; color: var(--muted);
+}
 .pts {
   font-weight: 700; padding: 1px 8px; border-radius: 999px;
   background: var(--amber-soft); color: var(--amber);
