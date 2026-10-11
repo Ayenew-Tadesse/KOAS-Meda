@@ -1,0 +1,119 @@
+:root {
+  --bg: #f4f5f7;
+  --surface: #ffffff;
+  --text: #15171a;
+  --muted: #6b7280;
+  --border: #e3e5e9;
+  --accent: #0f766e;
+  --live: #dc2626;
+  --flash: #fde68a;
+  color-scheme: light dark;
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #0e1013;
+    --surface: #171a1f;
+    --text: #eceef1;
+    --muted: #9099a6;
+    --border: #262a31;
+    --accent: #2dd4bf;
+    --live: #f87171;
+    --flash: #713f12;
+  }
+}
+* { box-sizing: border-box; }
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--text);
+  font: 15px/1.4 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+}
+button, input { font: inherit; color: inherit; }
+button {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 6px 12px;
+  cursor: pointer;
+}
+button:hover { border-color: var(--accent); }
+input[type="date"] {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 5px 8px;
+}
+
+.top {
+  display: flex; flex-wrap: wrap; gap: 12px;
+  align-items: center; justify-content: space-between;
+  padding: 16px; max-width: 1100px; margin: 0 auto;
+}
+.brand { display: flex; align-items: center; gap: 10px; }
+.brand h1 { font-size: 22px; margin: 0; letter-spacing: -0.02em; }
+.brand .tag { color: var(--muted); font-size: 13px; }
+.dot {
+  width: 10px; height: 10px; border-radius: 50%; background: var(--live);
+  animation: pulse 1.6s infinite;
+}
+@keyframes pulse { 50% { opacity: 0.3; } }
+.controls { display: flex; gap: 8px; }
+
+.leagues {
+  display: flex; gap: 8px; overflow-x: auto; padding: 4px 16px 12px;
+  max-width: 1100px; margin: 0 auto; scrollbar-width: thin;
+}
+.leagues button { white-space: nowrap; border-radius: 999px; }
+.leagues button.active { background: var(--accent); border-color: var(--accent); color: #fff; }
+@media (prefers-color-scheme: dark) { .leagues button.active { color: #0e1013; } }
+
+.bar {
+  display: flex; flex-wrap: wrap; gap: 8px; align-items: center; justify-content: space-between;
+  padding: 0 16px 12px; max-width: 1100px; margin: 0 auto;
+}
+.filters { display: flex; gap: 6px; }
+.filters button.active { border-color: var(--text); font-weight: 600; }
+.count { color: var(--live); font-weight: 700; }
+.status { color: var(--muted); font-size: 13px; }
+.status.error { color: var(--live); }
+
+.games {
+  display: grid; gap: 12px;
+  grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
+  padding: 0 16px 24px; max-width: 1100px; margin: 0 auto;
+}
+.card {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 14px;
+  display: grid; gap: 10px;
+}
+.card.in { border-left: 4px solid var(--live); }
+.meta { display: flex; justify-content: space-between; gap: 8px; font-size: 13px; color: var(--muted); }
+.meta .state { font-weight: 600; color: var(--text); }
+.card.in .meta .state { color: var(--live); }
+.card.in .meta .state::before { content: "● "; animation: pulse 1.6s infinite; }
+
+.team { display: grid; grid-template-columns: 28px 1fr auto; align-items: center; gap: 10px; }
+.team img, .team .badge {
+  width: 28px; height: 28px; object-fit: contain; border-radius: 50%;
+}
+.team .badge {
+  display: grid; place-items: center; font-size: 10px; font-weight: 700; color: #fff;
+  background: var(--muted);
+}
+.team .name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.team .record { color: var(--muted); font-size: 12px; margin-left: 6px; }
+.team .score { font-size: 22px; font-weight: 700; font-variant-numeric: tabular-nums; min-width: 2ch; text-align: right; padding: 0 4px; border-radius: 6px; }
+.card.post .team.loser { color: var(--muted); }
+.score.flash { animation: flash 2.5s ease-out; }
+@keyframes flash { 0% { background: var(--flash); } 100% { background: transparent; } }
+
+.extra { font-size: 12px; color: var(--muted); border-top: 1px solid var(--border); padding-top: 8px; display: flex; justify-content: space-between; gap: 8px; }
+.empty { grid-column: 1 / -1; text-align: center; color: var(--muted); padding: 48px 0; }
+.foot { text-align: center; color: var(--muted); font-size: 12px; padding: 0 16px 24px; }
+
+@media (max-width: 480px) {
+  .games { grid-template-columns: 1fr; }
+}

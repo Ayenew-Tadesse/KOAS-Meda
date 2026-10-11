@@ -1,0 +1,14 @@
+{
+  "name": "koas-meda",
+  "version": "1.0.0",
+  "description": "Live sports scores powered by ESPN's public scoreboard feed",
+  "main": "server.js",
+  "type": "commonjs",
+  "engines": { "node": ">=18" },
+  "scripts": {
+    "start": "node server.js",
+    "dev": "MOCK=1 node server.js",
+    "test": "node --test test/*.test.js"
+  },
+  "license": "MIT"
+}

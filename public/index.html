@@ -1,0 +1,42 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>KOAS Meda · Live Scores</title>
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>⚽</text></svg>" />
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+  <header class="top">
+    <div class="brand">
+      <span class="dot" aria-hidden="true"></span>
+      <h1>KOAS Meda</h1>
+      <span class="tag">Live Scores</span>
+    </div>
+    <div class="controls">
+      <input type="date" id="date" aria-label="Choose date" />
+      <button id="today" type="button">Today</button>
+      <button id="refresh" type="button" aria-label="Refresh now">↻</button>
+    </div>
+  </header>
+
+  <nav id="leagues" class="leagues" aria-label="Leagues"></nav>
+
+  <div class="bar">
+    <div class="filters" role="tablist" aria-label="Game status">
+      <button data-filter="all" class="active" role="tab">All</button>
+      <button data-filter="in" role="tab">Live <span id="live-count" class="count"></span></button>
+      <button data-filter="pre" role="tab">Upcoming</button>
+      <button data-filter="post" role="tab">Final</button>
+    </div>
+    <div id="status" class="status" aria-live="polite"></div>
+  </div>
+
+  <main id="games" class="games"></main>
+
+  <footer class="foot">Data from ESPN's public scoreboard feed. Live games refresh automatically.</footer>
+
+  <script src="app.js"></script>
+</body>
+</html>
