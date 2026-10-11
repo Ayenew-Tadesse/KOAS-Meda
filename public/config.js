@@ -4,6 +4,6 @@
 // rules in supabase/schema.sql.
 // Leave them empty to run in demo mode (accounts saved in this browser only).
 window.KOAS_CONFIG = {
-  supabaseUrl: '',
-  supabaseAnonKey: '',
+  supabaseUrl: 'https://cwcbnjkfptnralakmkqp.supabase.co',
+  supabaseAnonKey: 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImN3Y2JuamtmcHRucmFsYWtta3FwIiwicm9sZSI6ImFub24iLCJpYXQiOjE3OTE2OTU5NzAsImV4cCI6MjEwNzI3MTk3MH0.UbvZitodGcrFpT-w9TQgEoG3TVfPtgDHti0Me45TuqI',
 };
