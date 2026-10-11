@@ -1,7 +1,7 @@
 const http = require('http');
 const fs = require('fs');
 const path = require('path');
-const { LEAGUES } = require('./src/leagues');
+const { LEAGUES } = require('./public/leagues');
 const { getScoreboard } = require('./src/espn');
 
 const PORT = Number(process.env.PORT || 3000);

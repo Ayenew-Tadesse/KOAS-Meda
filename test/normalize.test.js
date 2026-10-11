@@ -1,7 +1,7 @@
 const test = require('node:test');
 const assert = require('node:assert');
 const fixture = require('./fixtures/scoreboard.json');
-const { normalizeScoreboard } = require('../src/normalize');
+const { normalizeScoreboard } = require('../public/normalize');
 
 test('normalizes ESPN scoreboard into compact events', () => {
   const sb = normalizeScoreboard(fixture, 'epl');

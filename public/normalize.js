@@ -1,3 +1,4 @@
+(() => {
 // Converts ESPN's verbose scoreboard payload into a compact shape the UI uses.
 
 function normalizeCompetitor(c = {}) {
@@ -50,4 +51,7 @@ function normalizeScoreboard(payload, leagueKey) {
   };
 }
 
-module.exports = { normalizeScoreboard, normalizeEvent };
+// Shared by the Node server (require) and the browser (window.KOAS).
+if (typeof module !== 'undefined' && module.exports) module.exports = { normalizeScoreboard, normalizeEvent };
+else (self.KOAS = self.KOAS || {}).normalize = { normalizeScoreboard, normalizeEvent };
+})();

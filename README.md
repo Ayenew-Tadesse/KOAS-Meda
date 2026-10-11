@@ -21,7 +21,12 @@ Premier League, La Liga, Serie A, Bundesliga, Ligue 1, Champions League, MLS.
 
 ## Run it
 
-Requires Node.js 18+.
+**Quickest:** open `public/index.html` in your browser (double-click it). With
+no server running, the page fetches scores straight from ESPN. You can also
+host the `public/` folder on any static host (GitHub Pages, Netlify, …).
+
+**With the Node server** (adds caching and keeps working if ESPN briefly fails).
+Requires Node.js 18+:
 
 ```bash
 npm start          # http://localhost:3000, real ESPN data
@@ -43,18 +48,18 @@ Environment variables: `PORT` (default 3000), `CACHE_TTL_MS` (default 15000),
 
 ```
 server.js           HTTP server: static files + JSON API
-src/leagues.js      League list (add more here)
-src/espn.js         ESPN fetcher with caching
-src/normalize.js    ESPN payload -> compact game objects
+src/espn.js         Server-side ESPN fetcher with caching
+public/leagues.js   League list (add more here; shared by server and browser)
+public/normalize.js ESPN payload -> compact game objects (shared)
 public/             Frontend (HTML/CSS/vanilla JS)
 test/               node:test suites + sample fixture
 ```
 
-To add a league, append an entry to `src/leagues.js` using ESPN's
+To add a league, append an entry to `public/leagues.js` using ESPN's
 `{sport}/{league}` slug, e.g.
 `{ key: 'eredivisie', name: 'Eredivisie', sport: 'soccer', league: 'ned.1' }`.
 
 > ESPN's scoreboard endpoint is public but unofficial and can change without
 > notice. For a commercial product, consider a licensed provider such as
-> API-Sports or Sportradar — only `src/espn.js` and `src/normalize.js` would
+> API-Sports or Sportradar — only `src/espn.js` and `public/normalize.js` would
 > need to change.

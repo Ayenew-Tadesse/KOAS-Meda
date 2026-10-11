@@ -1,7 +1,7 @@
 const fs = require('fs');
 const path = require('path');
-const { byKey } = require('./leagues');
-const { normalizeScoreboard } = require('./normalize');
+const { byKey } = require('../public/leagues');
+const { normalizeScoreboard } = require('../public/normalize');
 
 const BASE = 'https://site.api.espn.com/apis/site/v2/sports';
 const CACHE_TTL_MS = Number(process.env.CACHE_TTL_MS || 15000);

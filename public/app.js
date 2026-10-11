@@ -40,8 +40,43 @@
     return n;
   }
 
+  // Data source: our Node server's /api when it's running, otherwise ESPN
+  // directly from the browser (e.g. index.html opened from disk or a static host).
+  const ESPN_BASE = 'https://site.api.espn.com/apis/site/v2/sports';
+  let mode = location.protocol === 'file:' ? 'direct' : null;
+
+  async function fetchLeagues() {
+    if (mode !== 'direct') {
+      try {
+        const res = await fetch('api/leagues');
+        const body = await res.json();
+        if (res.ok && Array.isArray(body)) { mode = 'server'; return body; }
+      } catch { /* no server; fall through */ }
+      mode = 'direct';
+    }
+    return KOAS.leagues.LEAGUES;
+  }
+
+  async function fetchScoreboard(leagueKey, date) {
+    if (mode === 'server') {
+      const params = new URLSearchParams({ league: leagueKey });
+      if (date) params.set('date', date);
+      const res = await fetch(`api/scoreboard?${params}`);
+      const body = await res.json();
+      if (!res.ok) throw new Error(body.error || `HTTP ${res.status}`);
+      return body;
+    }
+    const league = KOAS.leagues.byKey[leagueKey];
+    const url = new URL(`${ESPN_BASE}/${league.sport}/${league.league}/scoreboard`);
+    if (date) url.searchParams.set('dates', date);
+    const res = await fetch(url);
+    if (!res.ok) throw new Error(`ESPN responded ${res.status}`);
+    const data = KOAS.normalize.normalizeScoreboard(await res.json(), leagueKey);
+    return { ...data, leagueName: league.name, updatedAt: new Date().toISOString() };
+  }
+
   async function loadLeagues() {
-    const leagues = await (await fetch('/api/leagues')).json();
+    const leagues = await fetchLeagues();
     if (!leagues.some((l) => l.key === state.league)) state.league = leagues[0].key;
     els.leagues.replaceChildren(...leagues.map((l) => {
       const b = el('button', l.key === state.league ? 'active' : '', l.name);
@@ -63,26 +98,24 @@
 
   async function refresh() {
     clearTimeout(state.timer);
-    if (state.loading) return;
+    if (state.loading) { state.again = true; return; } // re-run once the current request ends
     state.loading = true;
-    const params = new URLSearchParams({ league: state.league });
-    if (state.date) params.set('date', state.date.replaceAll('-', ''));
     const league = state.league;
+    const date = state.date;
     try {
-      const res = await fetch(`/api/scoreboard?${params}`);
-      const body = await res.json();
-      if (!res.ok) throw new Error(body.error || `HTTP ${res.status}`);
-      if (league !== state.league) return; // user switched mid-request
+      const body = await fetchScoreboard(league, date ? date.replaceAll('-', '') : '');
+      if (league !== state.league || date !== state.date) return; // selection changed mid-request
       state.data = body;
       render();
       const t = new Date(body.updatedAt).toLocaleTimeString();
       setStatus(body.stale ? `Showing cached data from ${t} (source unavailable)` : `Updated ${t}`, body.stale);
     } catch (err) {
-      setStatus(`Couldn't load scores: ${err.message}`, true);
+      const reason = err instanceof TypeError ? 'network error, check your connection' : err.message;
+      setStatus(`Couldn't load scores (${reason})`, true);
       if (!state.data) els.games.replaceChildren(el('div', 'empty', 'Scores are unavailable right now. Retrying…'));
     } finally {
       state.loading = false;
-      schedule();
+      if (state.again) { state.again = false; refresh(); } else schedule();
     }
   }
 

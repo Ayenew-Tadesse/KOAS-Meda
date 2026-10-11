@@ -1,3 +1,4 @@
+(() => {
 // Leagues available through ESPN's public scoreboard endpoint:
 // https://site.api.espn.com/apis/site/v2/sports/{sport}/{league}/scoreboard
 const LEAGUES = [
@@ -19,4 +20,7 @@ const LEAGUES = [
 
 const byKey = Object.fromEntries(LEAGUES.map((l) => [l.key, l]));
 
-module.exports = { LEAGUES, byKey };
+// Shared by the Node server (require) and the browser (window.KOAS).
+if (typeof module !== 'undefined' && module.exports) module.exports = { LEAGUES, byKey };
+else (self.KOAS = self.KOAS || {}).leagues = { LEAGUES, byKey };
+})();
