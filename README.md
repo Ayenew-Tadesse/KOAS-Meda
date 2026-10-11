@@ -11,7 +11,8 @@ Premier League, La Liga, Serie A, Bundesliga, Ligue 1, Champions League, MLS.
 
 - Live games first, with a pulsing **LIVE** marker, game clock/period, and a
   highlight flash whenever a score changes
-- Filter by **All / Live / Upcoming / Final**, and browse any date
+- **Live** lists every game in progress across all leagues at once; **All /
+  Upcoming / Final** show the selected league for any date
 - Auto-refresh: every 15s while a game is live, every 60s otherwise; pauses
   when the tab is hidden
 - Venue, TV broadcast, and team records
