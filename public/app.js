@@ -1,7 +1,7 @@
 (() => {
   const LIVE_REFRESH_MS = 15000; // when a game is in progress
   const IDLE_REFRESH_MS = 60000; // when nothing is live
-  const SWEEP_MAX_AGE_MS = 120000; // how stale the all-leagues live count may get
+  const LIVE_COUNT_MAX_AGE_MS = 120000; // how stale the Live badge may get off the home view
   const STATE_ORDER = { in: 0, pre: 1, post: 2 };
   const STATE_LABEL = { in: 'LIVE', pre: 'Upcoming', post: 'Final' };
 
@@ -14,13 +14,10 @@
     liveCount: $('#live-count'),
   };
 
-  const store = {
-    get(k, fallback) { try { return localStorage.getItem(k) || fallback; } catch { return fallback; } },
-    set(k, v) { try { localStorage.setItem(k, v); } catch { /* ignore */ } },
-  };
+  const ALL = 'all'; // league key meaning "every league"
 
   const state = {
-    league: store.get('league', 'nfl'),
+    league: ALL, // the home page shows every league
     filter: 'all',
     date: '', // '' = today
     data: null,
@@ -28,9 +25,10 @@
     timer: null,
     loading: false,
     leagues: [],
-    // Live games across every league, from the last sweep: [{ key, name, events }]
-    live: null,
-    liveAt: 0,
+    // Live-game count across every league for the Live badge, kept fresh
+    // in the background while a single league or another date is shown.
+    liveCount: 0,
+    liveCountAt: 0,
   };
 
   const todayIso = () => {
@@ -81,75 +79,73 @@
   }
 
   async function loadLeagues() {
-    const leagues = await fetchLeagues();
-    state.leagues = leagues;
-    if (!leagues.some((l) => l.key === state.league)) state.league = leagues[0].key;
-    els.leagues.replaceChildren(...leagues.map((l) => {
+    state.leagues = await fetchLeagues();
+    const chips = [{ key: ALL, name: 'All leagues' }, ...state.leagues].map((l) => {
       const b = el('button', l.key === state.league ? 'active' : '', l.name);
       b.type = 'button';
       b.dataset.key = l.key;
-      b.addEventListener('click', () => selectLeague(l.key));
+      b.addEventListener('click', () => {
+        if (l.key !== ALL && state.filter === 'in') setFilter('all'); // Live spans every league
+        selectLeague(l.key);
+      });
       return b;
-    }));
+    });
+    els.leagues.replaceChildren(...chips);
   }
 
   function selectLeague(key) {
-    if (state.filter === 'in') setFilter('all'); // Live spans all leagues; picking one leaves it
+    if (key === state.league) return;
     state.league = key;
-    store.set('league', key);
     state.prevScores.clear();
     els.leagues.querySelectorAll('button').forEach((b) => b.classList.toggle('active', b.dataset.key === key));
-    els.games.replaceChildren(el('div', 'empty', 'Loading…'));
+    els.games.replaceChildren(el('div', 'empty', key === ALL ? 'Loading every league…' : 'Loading…'));
     refresh();
   }
 
-  // Fetches today's scoreboard for every league and keeps only games in progress.
-  async function sweepLive() {
-    const results = await Promise.allSettled(state.leagues.map((l) => fetchScoreboard(l.key, '')));
-    const groups = [];
-    let failed = 0;
-    results.forEach((r, i) => {
-      if (r.status !== 'fulfilled') { failed += 1; return; }
-      const events = r.value.events.filter((e) => e.state === 'in');
-      if (events.length) groups.push({ key: state.leagues[i].key, name: state.leagues[i].name, events });
-    });
-    if (failed === results.length && results.length) throw results[0].reason;
-    state.live = groups;
-    state.liveAt = Date.now();
-    return failed;
+  // Loads one league, or every league in parallel; games carry their league.
+  async function loadScope(leagueKey, date) {
+    const keys = leagueKey === ALL ? state.leagues.map((l) => l.key) : [leagueKey];
+    const results = await Promise.allSettled(keys.map((k) => fetchScoreboard(k, date)));
+    const ok = results.filter((r) => r.status === 'fulfilled').map((r) => r.value);
+    if (!ok.length) throw results[0].reason;
+    const order = Object.fromEntries(state.leagues.map((l, i) => [l.key, i]));
+    return {
+      events: ok.flatMap((sb) => sb.events.map((e) => ({ ...e, leagueKey: sb.league, leagueName: sb.leagueName, leagueOrder: order[sb.league] ?? 99 }))),
+      leagueName: leagueKey === ALL ? 'any league' : ok[0].leagueName,
+      leaguesLoaded: ok.length,
+      failed: results.length - ok.length,
+      stale: ok.some((sb) => sb.stale),
+      updatedAt: ok.map((sb) => sb.updatedAt).sort()[0],
+    };
   }
+
+  const countLive = (events) => events.filter((e) => e.state === 'in').length;
 
   async function refresh() {
     clearTimeout(state.timer);
     if (state.loading) { state.again = true; return; } // re-run once the current request ends
     state.loading = true;
-    const { league, date, filter } = state;
+    const { league, date } = state;
     try {
-      if (filter === 'in') {
-        const failed = await sweepLive();
-        if (state.filter !== 'in') return; // left Live mid-request
-        render();
-        const total = state.live.reduce((n, g) => n + g.events.length, 0);
-        const t = new Date().toLocaleTimeString();
-        setStatus(`${total} live across ${state.leagues.length - failed} leagues · Updated ${t}`
-          + (failed ? ` (${failed} couldn't load)` : ''), false);
-      } else {
-        const sweep = Date.now() - state.liveAt > SWEEP_MAX_AGE_MS
-          ? sweepLive().catch(() => {}) // keeps the Live count current; errors shown in Live view
-          : null;
-        const body = await fetchScoreboard(league, date ? date.replaceAll('-', '') : '');
-        if (league !== state.league || date !== state.date || state.filter === 'in') return; // selection changed mid-request
-        state.data = body;
-        render();
-        const t = new Date(body.updatedAt).toLocaleTimeString();
-        setStatus(body.stale ? `Showing cached data from ${t} (source unavailable)` : `Updated ${t}`, body.stale);
-        if (sweep) sweep.then(renderLiveCount);
-      }
+      const showingAllToday = league === ALL && !date;
+      const badgeSweep = !showingAllToday && Date.now() - state.liveCountAt > LIVE_COUNT_MAX_AGE_MS
+        ? loadScope(ALL, '').then((d) => { state.liveCount = countLive(d.events); state.liveCountAt = Date.now(); renderLiveCount(); }, () => {})
+        : null;
+      const body = await loadScope(league, date ? date.replaceAll('-', '') : '');
+      if (league !== state.league || date !== state.date) return; // selection changed mid-request
+      state.data = body;
+      if (showingAllToday) { state.liveCount = countLive(body.events); state.liveCountAt = Date.now(); }
+      render();
+      const t = new Date(body.updatedAt).toLocaleTimeString();
+      let msg = body.stale ? `Showing cached data from ${t} (source unavailable)` : `Updated ${t}`;
+      if (league === ALL) msg = `${body.events.length} games in ${body.leaguesLoaded} leagues · ${msg}`;
+      if (body.failed) msg += ` · ${body.failed} league${body.failed > 1 ? 's' : ''} couldn't load`;
+      setStatus(msg, body.stale);
+      await badgeSweep;
     } catch (err) {
       const reason = err instanceof TypeError ? 'network error, check your connection' : err.message;
       setStatus(`Couldn't load scores (${reason})`, true);
-      const nothingShown = filter === 'in' ? !state.live : !state.data;
-      if (nothingShown) els.games.replaceChildren(el('div', 'empty', 'Scores are unavailable right now. Retrying…'));
+      if (!state.data) els.games.replaceChildren(el('div', 'empty', 'Scores are unavailable right now. Retrying…'));
     } finally {
       state.loading = false;
       if (state.again) { state.again = false; refresh(); } else schedule();
@@ -159,9 +155,7 @@
   function schedule() {
     clearTimeout(state.timer);
     if (document.hidden) return; // resume on visibilitychange
-    const anyLive = state.filter === 'in'
-      ? state.live && state.live.length > 0
-      : state.data && state.data.events.some((e) => e.state === 'in');
+    const anyLive = state.data && countLive(state.data.events) > 0;
     state.timer = setTimeout(refresh, anyLive ? LIVE_REFRESH_MS : IDLE_REFRESH_MS);
   }
 
@@ -204,15 +198,29 @@
     return b;
   }
 
-  function gameCard(g, leagueLink) {
+  function leagueLink(g) {
+    const link = el('button', 'league-link', g.leagueName);
+    link.type = 'button';
+    link.title = `Show only ${g.leagueName}`;
+    link.addEventListener('click', () => {
+      if (state.filter === 'in') setFilter('all');
+      selectLeague(g.leagueKey);
+    });
+    return link;
+  }
+
+  function gameCard(g) {
     const card = el('article', `card ${g.state}`);
     const meta = el('div', 'meta');
     let when = g.detail;
     if (g.state === 'pre' && g.date) {
       when = new Date(g.date).toLocaleString([], { weekday: 'short', hour: 'numeric', minute: '2-digit' });
     }
-    meta.append(el('span', 'state', g.state === 'in' ? `${STATE_LABEL.in} · ${g.detail}` : STATE_LABEL[g.state] || g.detail));
-    meta.append(leagueLink || el('span', '', g.state === 'in' ? '' : g.state === 'post' ? g.detail : when));
+    const label = g.state === 'in' ? `${STATE_LABEL.in} · ${g.detail}`
+      : g.state === 'pre' ? when
+      : g.detail || STATE_LABEL.post;
+    meta.append(el('span', 'state', label));
+    meta.append(state.league === ALL ? leagueLink(g) : el('span', '', g.state === 'pre' ? STATE_LABEL.pre : ''));
     card.append(meta, teamRow(g.away, g), teamRow(g.home, g));
 
     if (g.venue || g.broadcast) {
@@ -224,62 +232,45 @@
   }
 
   function renderLiveCount() {
-    const total = state.live ? state.live.reduce((n, g) => n + g.events.length, 0) : 0;
-    els.liveCount.textContent = total ? String(total) : '';
-  }
-
-  function renderLive() {
-    const groups = state.live || [];
-    if (!groups.length) {
-      els.games.replaceChildren(el('div', 'empty', 'No games are live right now in any league. Check Upcoming for what\'s next.'));
-      return;
-    }
-    const nodes = [];
-    for (const g of groups) {
-      for (const game of g.events.sort((a, b) => new Date(a.date) - new Date(b.date))) {
-        const link = el('button', 'league-link', g.name);
-        link.type = 'button';
-        link.title = `Show all ${g.name} games`;
-        link.addEventListener('click', () => selectLeague(g.key));
-        nodes.push(gameCard(game, link));
-      }
-    }
-    els.games.replaceChildren(...nodes);
+    els.liveCount.textContent = state.liveCount ? String(state.liveCount) : '';
   }
 
   function render() {
     renderLiveCount();
     document.body.classList.toggle('live-mode', state.filter === 'in');
-    if (state.filter === 'in') return renderLive();
-
     const events = (state.data && state.data.events) || [];
     const shown = events
       .filter((e) => state.filter === 'all' || e.state === state.filter)
-      .sort((a, b) => (STATE_ORDER[a.state] ?? 3) - (STATE_ORDER[b.state] ?? 3) || new Date(a.date) - new Date(b.date));
+      .sort((a, b) => (STATE_ORDER[a.state] ?? 3) - (STATE_ORDER[b.state] ?? 3)
+        || a.leagueOrder - b.leagueOrder
+        || new Date(a.date) - new Date(b.date));
 
     if (!shown.length) {
-      const what = { all: 'games', pre: 'upcoming games', post: 'finished games' }[state.filter];
-      els.games.replaceChildren(el('div', 'empty', `No ${what} for ${state.data ? state.data.leagueName : 'this league'} on this date.`));
+      const what = { all: 'games', in: 'live games right now', pre: 'upcoming games', post: 'finished games' }[state.filter];
+      const where = state.data ? state.data.leagueName : 'this league';
+      const when = state.filter === 'in' ? '' : ' on this date';
+      els.games.replaceChildren(el('div', 'empty', `No ${what} in ${where}${when}.`));
       return;
     }
     els.games.replaceChildren(...shown.map(gameCard));
   }
 
   function setFilter(filter) {
-    const wasLive = state.filter === 'in';
     state.filter = filter;
     document.querySelectorAll('.filters button').forEach((x) => x.classList.toggle('active', x.dataset.filter === filter));
-    return wasLive !== (filter === 'in'); // switching to or from Live needs different data
   }
 
   document.querySelectorAll('.filters button').forEach((b) => b.addEventListener('click', () => {
-    const needsData = setFilter(b.dataset.filter);
-    if (needsData && !(b.dataset.filter === 'in' ? state.live : state.data)) {
-      els.games.replaceChildren(el('div', 'empty', b.dataset.filter === 'in' ? 'Checking every league for live games…' : 'Loading…'));
-    } else {
-      render();
+    setFilter(b.dataset.filter);
+    // Live means every league, right now.
+    if (b.dataset.filter === 'in' && (state.league !== ALL || state.date)) {
+      state.date = '';
+      els.date.value = todayIso();
+      if (state.league !== ALL) return selectLeague(ALL);
+      els.games.replaceChildren(el('div', 'empty', 'Loading every league…'));
+      return refresh();
     }
-    if (needsData) refresh();
+    render();
   }));
 
   els.date.value = todayIso();
